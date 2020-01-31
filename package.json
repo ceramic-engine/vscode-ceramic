@@ -1,0 +1,44 @@
+{
+    "name": "ceramic",
+    "displayName": "Ceramic",
+    "description": "An extension to use ceramic engine with Visual Studio Code",
+    "publisher": "jeremyfa",
+    "license": "MIT",
+    "version": "0.1.0",
+    "engines": {
+        "vscode": "^1.4.0"
+    },
+    "activationEvents": [
+        "workspaceContains:**/ceramic.yml",
+        "onCommand:ceramic.load"
+    ],
+    "contributes": {
+        "commands": [
+            {
+                "title": "Load ceramic context",
+                "command": "ceramic.load",
+                "category": "Ceramic"
+            },
+            {
+                "title": "Select target",
+                "command": "ceramic.select-target",
+                "category": "Ceramic"
+            },
+            {
+                "title": "Select variant",
+                "command": "ceramic.select-variant",
+                "category": "Ceramic"
+            }
+        ]
+    },
+    "bugs": "https://github.com/ceramic-engine/vscode-ceramic/issues",
+    "homepage": "https://github.com/ceramic-engine/vscode-ceramic/blob/master/README.md",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/ceramic-engine/vscode-ceramic.git"
+    },
+    "scripts": {
+        "vscode:prepublish": "haxe build.hxml"
+    },
+    "main": "./vscode-ceramic"
+}
