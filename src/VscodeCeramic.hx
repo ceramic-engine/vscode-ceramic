@@ -1,5 +1,6 @@
 package;
 
+import haxe.Timer;
 import js.html.Console;
 import sys.io.File;
 import haxe.io.Path;
@@ -9,6 +10,69 @@ import js.node.ChildProcess;
 import vscode.ExtensionContext;
 import vscode.StatusBarItem;
 import vscode.FileSystemWatcher;
+
+using StringTools;
+
+typedef IdeInfoTargetItem = {
+
+    var name:String;
+
+    var command:String;
+
+    @:optional var args:Array<String>;
+
+    /** The groups this task belongs to. */
+    @:optional var groups:Array<String>;
+
+    @:optional var select:IdeInfoTargetSelectItem;
+
+}
+
+typedef IdeInfoTargetSelectItem = {
+
+    var command:String;
+
+    @:optional var args:Array<String>;
+
+}
+
+typedef IdeInfoVariantItem = {
+
+    var name:String;
+
+    @:optional var args:Array<String>;
+
+    /** On which task group this variant can be used. */
+    @:optional var group:String;
+
+    /** We can only choose one variant for each role at a time. */
+    @:optional var role:String;
+
+    @:optional var select:IdeInfoVariantSelectItem;
+
+}
+
+typedef IdeInfoVariantSelectItem = {
+
+    @:optional var args:Array<String>;
+
+}
+
+typedef UserInfo = {
+
+    var ceramicProject:String;
+
+    var perProjectSettings:Dynamic<ProjectUserInfo>;
+
+}
+
+typedef ProjectUserInfo = {
+
+    var target:String;
+
+    var perTargetVariant:Dynamic<String>;
+
+}
 
 class VscodeCeramic {
 
@@ -29,13 +93,9 @@ class VscodeCeramic {
 
     var watchingWorkspace:Bool = false;
 
-    var tasksPath:String;
-
-    var listContent:Dynamic;
-
-    var chooserIndex:Dynamic;
-
     var watcher:FileSystemWatcher;
+
+    var ceramicProjectStatusBarItem:StatusBarItem;
 
     var targetStatusBarItem:StatusBarItem;
 
@@ -45,16 +105,34 @@ class VscodeCeramic {
 
     var availableCeramicProjects:Array<String> = [];
 
-    var selectedCeramicProject:String = null;
+    var selectedCeramicProject(get, set):String;
+
+    var availableTargets:Array<String> = [];
+
+    var selectedTarget:String = null;
+
+    var userInfo:UserInfo;
+
+    var userInfoDirty(default, set):Bool = false;
+
+    var ideTargets:Array<IdeInfoTargetItem> = null;
+
+    var ideVariants:Array<IdeInfoTargetSelectItem> = null;
 
 /// Lifecycle
 
     function new(context:ExtensionContext) {
 
         this.context = context;
+        
+        loadUserInfo();
 
         context.subscriptions.push(Vscode.commands.registerCommand("ceramic.load", function() {
             loadCeramicContext();
+        }));
+
+        context.subscriptions.push(Vscode.commands.registerCommand("ceramic.select-ceramic-project", function() {
+            selectCeramicProject();
         }));
 
         context.subscriptions.push(Vscode.commands.registerCommand("ceramic.select-target", function() {
@@ -66,6 +144,60 @@ class VscodeCeramic {
         }));
 
         loadCeramicContext();
+
+    }
+
+/// User info
+
+    function loadUserInfo() {
+
+        var rawUserInfo = context.workspaceState.get('ceramicUserInfo');
+        try {
+            userInfo = Json.parse(rawUserInfo);
+        }
+        catch (e:Dynamic) {
+            // Failed to parse data?
+        }
+        if (userInfo == null) {
+            userInfo = {
+                ceramicProject: null,
+                perProjectSettings: {}
+            };
+        }
+
+    }
+
+    function saveUserInfo() {
+
+        context.workspaceState.update('ceramicUserInfo', Json.stringify(userInfo));
+
+    }
+
+    function set_userInfoDirty(userInfoDirty:Bool):Bool {
+
+        if (this.userInfoDirty == userInfoDirty)
+            return userInfoDirty;
+        
+        this.userInfoDirty = userInfoDirty;
+        if (userInfoDirty) {
+            Timer.delay(saveUserInfo, 250);
+        }
+
+        return userInfoDirty;
+
+    }
+
+    function get_selectedCeramicProject():String {
+
+        return userInfo.ceramicProject;
+
+    }
+
+    function set_selectedCeramicProject(selectedCeramicProject:String):String {
+
+        var result = userInfo.ceramicProject = selectedCeramicProject;
+        userInfoDirty = true;
+        return result;
 
     }
 
@@ -111,14 +243,141 @@ class VscodeCeramic {
 
     function createOrUpdateCeramicPath(path:String) {
 
-        // TODO
+        if (availableCeramicProjects.indexOf(path) == -1) {
+            availableCeramicProjects.push(path);
+            sortAlphabetically(availableCeramicProjects);
+            updateFromSelectedCeramicProject();
+        }
         
     }
 
     function removeCeramicPath(path:String) {
 
-        // TODO
+        var shouldRefresh = false;
+        var index = availableCeramicProjects.indexOf(path);
+
+        if (index != -1) {
+            availableCeramicProjects.splice(index, 1);
+            sortAlphabetically(availableCeramicProjects);
+            shouldRefresh = true;
+        }
+
+        if (path == selectedCeramicProject) {
+            selectedCeramicProject = null;
+            shouldRefresh = true;
+        }
+
+        if (shouldRefresh)
+            updateFromSelectedCeramicProject();
         
+    }
+
+    function updateFromSelectedCeramicProject() {
+        
+        if (selectedCeramicProject == null && availableCeramicProjects.length > 0) {
+            selectedCeramicProject = availableCeramicProjects[0];
+        }
+
+        var title = selectedCeramicProject != null ? computeShortPath(selectedCeramicProject) : '⚠️ no ceramic project';
+        var description = selectedCeramicProject != null ? selectedCeramicProject : 'This workspace doesn\'t have any ceramic.yml file';
+
+        ceramicProjectStatusBarItem = updateStatusBarItem(
+            ceramicProjectStatusBarItem,
+            title,
+            description,
+            'ceramic.select-ceramic-project'
+        );
+
+        if (selectedCeramicProject != null) {
+            fetchTargets();
+        }
+
+    }
+
+    var fetchingTargets:Bool = false;
+    var shouldFetchAgain:Bool = false;
+    function fetchTargets() {
+
+        trace('FETCH TARGETS $selectedCeramicProject');
+
+        if (fetchingTargets) {
+            trace('- already fetching -');
+            shouldFetchAgain = true;
+            return;
+        }
+        fetchingTargets = true;
+
+        command('ceramic', ['ide', 'info', '--print-split-lines'], { cwd: Path.directory(selectedCeramicProject), showError: true }, function(code, out, err) {
+            fetchingTargets = false;
+
+            trace('-> fetch result');
+
+            if (shouldFetchAgain) {
+                trace('   FETCH AGAIN');
+                shouldFetchAgain = false;
+                fetchTargets();
+                return;
+            }
+
+            var data = Json.parse(out);
+            ideTargets = data.ide.targets;
+            ideVariants = data.ide.variants;
+            
+            availableTargets = []; 
+            for (ideTarget in ideTargets) {
+                availableTargets.push(ideTarget.name);
+            }
+
+            updateFromSelectedTarget();
+        });
+
+    }
+
+    function updateFromSelectedTarget() {
+
+        if (selectedTarget != null && availableTargets.indexOf(selectedTarget) == -1) {
+            selectedTarget = null;
+        }
+        
+        if (selectedTarget == null && availableTargets.length > 0) {
+            selectedTarget = availableTargets[0];
+        }
+
+        var title = selectedTarget != null ? selectedTarget : '⚠️ no target';
+        var description = selectedTarget != null ? selectedTarget : 'No target available for this ceramic project';
+
+        trace('update from selected target title=$title available=$availableTargets');
+
+        targetStatusBarItem = updateStatusBarItem(
+            targetStatusBarItem,
+            title,
+            description,
+            'ceramic.select-target'
+        );
+
+        if (selectedTarget != null) {
+            // TODO compute variants
+        }
+
+    }
+
+    function sortAlphabetically(array:Array<String>) {
+
+        array.sort(function(a, b) {
+            a = a.toUpperCase();
+            b = b.toUpperCase();
+
+            if (a < b) {
+                return -1;
+            }
+            else if (a > b) {
+                return 1;
+            }
+            else {
+                return 0;
+            }
+        });
+
     }
 
 /// Actions
@@ -175,48 +434,84 @@ class VscodeCeramic {
 
     }
 
-    function selectTarget() {
+    function selectCeramicProject() {
 
         var pickItems:Array<Dynamic> = [];
         var index = 0;
-        var items:Array<Dynamic> = listContent.items;
-        for (item in items) {
+        var availableCeramicProjects = [].concat(this.availableCeramicProjects);
+        var shortPaths = computeShortPaths(availableCeramicProjects);
+        for (path in availableCeramicProjects) {
             pickItems.push({
-                label: (item.displayName != null ? item.displayName : 'Task #' + index),
-                description: item.description != null ? item.description : '',
+                label: shortPaths[index],
+                description: path,
                 index: index,
             });
             index++;
         }
 
-        // Put selected task at the top
-        if (chooserIndex > 0) {
-            var selectedItem = pickItems[chooserIndex];
-            pickItems.splice(chooserIndex, 1);
+        // Put selected project at the top
+        var selectedIndex = availableCeramicProjects.indexOf(selectedCeramicProject);
+        if (selectedIndex != -1) {
+            var selectedItem = pickItems[selectedIndex];
+            pickItems.splice(selectedIndex, 1);
             pickItems.unshift(selectedItem);
         }
 
-        var placeHolder = null;
-        if (listContent.selectDescription != null) {
-            placeHolder = listContent.selectDescription;
-        } else {
-            placeHolder = 'Select task';
-        }
+        var placeHolder = 'Select ceramic project';
 
         Vscode.window.showQuickPick(pickItems, { placeHolder: placeHolder }).then(function(choice:Dynamic) {
-            if (choice == null || choice.index == chooserIndex) {
+            if (choice == null || choice.index == selectedIndex) {
                 return;
             }
             
             try {
-                setChooserIndex(choice.index);
+                selectedCeramicProject = availableCeramicProjects[choice.index];
+                updateFromSelectedCeramicProject();
             }
             catch (e:Dynamic) {
-                Vscode.window.showErrorMessage("Failed to select task: " + e);
+                Vscode.window.showErrorMessage("Failed to select ceramic project: " + e);
                 js.Node.console.error(e);
             }
 
         });
+
+    }
+
+    function computeShortPath(path:String):String {
+
+        var rootPath = getRootPath();
+
+        if (rootPath != null && path.startsWith(rootPath)) {
+            return path.substring(rootPath.length + 1);
+        }
+        else {
+            return path;
+        }
+
+    }
+
+    function computeShortPaths(paths:Array<String>):Array<String> {
+
+        var rootPath = getRootPath();
+
+        var result = [];
+
+        for (path in paths) {
+            if (rootPath != null && path.startsWith(rootPath)) {
+                result.push(path.substring(rootPath.length + 1));
+            }
+            else {
+                result.push(path);
+            }
+        }
+
+        return result;
+
+    }
+
+    function selectTarget() {
+
+        // TODO
 
     }
 
@@ -244,6 +539,7 @@ class VscodeCeramic {
 
     }
 
+    /*
     function setChooserIndex(targetIndex:Int) {
 
         if (!checkWorkspaceFolder()) {
@@ -300,6 +596,7 @@ class VscodeCeramic {
         }
 
     }
+    */
 
 /// Internal helpers
 

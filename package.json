@@ -25,6 +25,11 @@
                 "category": "Ceramic"
             },
             {
+                "title": "Select ceramic project",
+                "command": "ceramic.select-ceramic-project",
+                "category": "Ceramic"
+            },
+            {
                 "title": "Select variant",
                 "command": "ceramic.select-variant",
                 "category": "Ceramic"
