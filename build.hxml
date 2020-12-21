@@ -1,5 +1,7 @@
 -cp src
 -lib vscode
+-lib tracker
+-lib hxnodejs
 -js vscode-ceramic.js
 -D js-source-map
 VscodeCeramic

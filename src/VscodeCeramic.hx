@@ -1,5 +1,10 @@
 package;
 
+import sys.FileSystem;
+import tracker.Tracker;
+import tracker.DefaultBackend;
+import tracker.Model;
+import tracker.Entity;
 import haxe.Timer;
 import js.html.Console;
 import sys.io.File;
@@ -12,6 +17,7 @@ import vscode.StatusBarItem;
 import vscode.FileSystemWatcher;
 
 using StringTools;
+using tracker.SaveModel;
 
 typedef IdeInfoTargetItem = {
 
@@ -58,23 +64,39 @@ typedef IdeInfoVariantSelectItem = {
 
 }
 
-typedef UserInfo = {
+class TrackerBackend extends DefaultBackend {
 
-    var ceramicProject:String;
+    var context:ExtensionContext;
 
-    var perProjectSettings:Dynamic<ProjectUserInfo>;
+    public function new(context:ExtensionContext) {
+        super();
+        this.context = context;
+    }
 
-}
+    override function saveString(key:String, str:String):Bool {
+        context.workspaceState.update(key, str);
+        return true;
+    }
 
-typedef ProjectUserInfo = {
+    override function appendString(key:String, str:String):Bool {
+        var existing = context.workspaceState.get(key);
+        if (existing == null) {
+            context.workspaceState.update(key, str);
+        }
+        else {
+            context.workspaceState.update(key, existing + str);
+        }
+        return true;
+    }
 
-    var target:String;
+    override function readString(key:String):String {
+        var str = context.workspaceState.get(key);
+        return str;
+    }
 
-    var perTargetVariant:Dynamic<String>;
+}   
 
-}
-
-class VscodeCeramic {
+class VscodeCeramic extends Model {
 
 /// Exposed
 
@@ -83,7 +105,10 @@ class VscodeCeramic {
     @:expose("activate")
     static function activate(context:ExtensionContext) {
 
-        instance = new VscodeCeramic(context);
+        Timer.delay(function() {
+            // If seems the delay is necessary to prevent some weird error?
+            instance = new VscodeCeramic(context);
+        }, 100);
 
     }
 
@@ -105,27 +130,159 @@ class VscodeCeramic {
 
     var availableCeramicProjects:Array<String> = [];
 
-    var selectedCeramicProject(get, set):String;
-
     var availableTargets:Array<String> = [];
 
-    var selectedTarget:String = null;
+    var availableVariants:Array<String> = [];
 
-    var userInfo:UserInfo;
+    var lastTasksJson:String = null;
 
-    var userInfoDirty(default, set):Bool = false;
+    @observe var ideTargets:Array<IdeInfoTargetItem> = null;
 
-    var ideTargets:Array<IdeInfoTargetItem> = null;
+    @observe var ideVariants:Array<IdeInfoVariantItem> = null;
 
-    var ideVariants:Array<IdeInfoTargetSelectItem> = null;
+    @serialize var selectedCeramicProject:String = null;
+
+    @serialize var selectedTarget:String = null;
+
+    @serialize var selectedVariant:String = null;
+
+/// Computed values
+
+    @compute function selectedTargetInfo():IdeInfoTargetItem {
+        var name = selectedTarget;
+        var result = null;
+
+        if (ideTargets != null) {
+            for (item in ideTargets) {
+                if (item.name == name) {
+                    result = item;
+                    break;
+                }
+            }
+        }
+
+        return result;
+
+    }
+
+    @compute function selectedVariantInfo():IdeInfoVariantItem {
+
+        var name = selectedVariant;
+        var result = null;
+        var targetInfo = this.selectedTargetInfo;
+
+        if (ideVariants != null) {
+            for (variantInfo in ideVariants) {
+                if (variantInfo.name == name) {
+                    if (variantInfo.group == null || (targetInfo != null && targetInfo.groups != null && targetInfo.groups.indexOf(variantInfo.group) != -1)) {
+                        result = variantInfo;
+                        break;
+                    }
+                }
+            }
+        }
+
+        return result;
+
+    }
+
+    @compute function tasksJsonString():Null<String> {
+
+        var selectedCeramicProject = this.selectedCeramicProject;
+        if (selectedCeramicProject == null) {
+            return null;
+        }
+
+        var selectedTarget = this.selectedTarget;
+        if (selectedTarget == null) {
+            return null;
+        }
+
+        var selectedTargetInfo = this.selectedTargetInfo;
+        if (selectedTargetInfo == null) {
+            return null;
+        }
+
+        var selectedVariantInfo = this.selectedVariantInfo;
+
+        var tasks:Dynamic = {};
+
+        var displayName = selectedTarget;
+        var description = '';
+
+        if (selectedTargetInfo.command != null) {
+            description += selectedTargetInfo.command;
+            if (selectedTargetInfo.args != null && selectedTargetInfo.args.length > 0) {
+                description += ' ' + selectedTargetInfo.args.join(' ');
+            }
+
+            if (selectedVariantInfo != null) {
+                if (selectedVariantInfo.args != null && selectedVariantInfo.args.length > 0) {
+                    description += ' ' + selectedVariantInfo.args.join(' ');
+                }
+                if (selectedVariantInfo.name != null && selectedVariantInfo.name.trim() != '') {
+                    displayName += ' (' + selectedVariantInfo.name + ')';
+                }
+            }
+        }
+
+        tasks.displayName = displayName;
+        tasks.description = description;
+        tasks.version = '2.0.0';
+
+        var task:Dynamic = {};
+
+        task.type = 'shell';
+        task.label = 'build';
+        task.command = selectedTargetInfo.command;
+        var taskArgs:Array<String> = [];
+        if (selectedTargetInfo.args != null) {
+            taskArgs = [].concat(selectedTargetInfo.args);
+        }
+        else {
+            taskArgs = [];
+        }
+        if (selectedVariantInfo != null) {
+            if (selectedVariantInfo.args != null && selectedVariantInfo.args.length > 0) {
+                for (arg in selectedVariantInfo.args) {
+                    taskArgs.push(arg);
+                }
+            }
+        }
+
+        taskArgs = updateArgsCwd(selectedCeramicProject, taskArgs);
+
+        task.args = taskArgs;
+        task.presentation = {
+            'echo': true,
+            'reveal': 'always',
+            'focus': false,
+            'panel': 'shared'
+        };
+        task.group = {
+            'kind': 'build',
+            'isDefault': true
+        };
+        task.problemMatcher = "$haxe";
+        task.runOptions = {
+            'instanceLimit': 1
+        }
+
+        tasks.tasks = [task];
+
+        return Json.stringify(tasks, null, '    ');
+
+    }
 
 /// Lifecycle
 
     function new(context:ExtensionContext) {
 
+        super();
+
         this.context = context;
-        
-        loadUserInfo();
+
+        initData();
 
         context.subscriptions.push(Vscode.commands.registerCommand("ceramic.load", function() {
             loadCeramicContext();
@@ -144,60 +301,112 @@ class VscodeCeramic {
         }));
 
         loadCeramicContext();
+        loadTasksJson();
+        disableTasksChooserFile();
 
     }
 
-/// User info
+    function initData() {
 
-    function loadUserInfo() {
+        Tracker.backend = new TrackerBackend(context);
 
-        var rawUserInfo = context.workspaceState.get('ceramicUserInfo');
+        this.loadFromKey('ceramicUserInfo');
+        this.autoSaveAsKey('ceramicUserInfo');
+
+        Tracker.backend.interval(this, 0.5, updateTasksJson);
+
+    }
+
+/// Update tasks.json
+
+    function loadTasksJson():Void {
+
         try {
-            userInfo = Json.parse(rawUserInfo);
+            var tasksPath = Path.join([getRootPath(), '.vscode/tasks.json']);
+            lastTasksJson = Json.parse(File.getContent(tasksPath));
         }
-        catch (e:Dynamic) {
-            // Failed to parse data?
-        }
-        if (userInfo == null) {
-            userInfo = {
-                ceramicProject: null,
-                perProjectSettings: {}
-            };
+        catch (e1:Dynamic) {
+            trace('Failed to load .vscode/tasks.json (maybe there is none yet)');
         }
 
     }
 
-    function saveUserInfo() {
+    function updateTasksJson():Void {
 
-        context.workspaceState.update('ceramicUserInfo', Json.stringify(userInfo));
-
-    }
-
-    function set_userInfoDirty(userInfoDirty:Bool):Bool {
-
-        if (this.userInfoDirty == userInfoDirty)
-            return userInfoDirty;
-        
-        this.userInfoDirty = userInfoDirty;
-        if (userInfoDirty) {
-            Timer.delay(saveUserInfo, 250);
+        var newTasksJson = this.tasksJsonString;
+        if (newTasksJson == null) {
+            return;
         }
 
-        return userInfoDirty;
+        if (lastTasksJson != newTasksJson) {
+
+            trace('Update .vscode/tasks.json...');
+
+            try {
+                var tasksPath = Path.join([getRootPath(), '.vscode/tasks.json']);
+                File.saveContent(tasksPath, newTasksJson);
+                lastTasksJson = newTasksJson;
+
+                trace('Updated!');
+            }
+            catch (e1:Dynamic) {
+                trace('Failed to update .vscode/tasks.json: ' + e1);
+            }
+        }
 
     }
 
-    function get_selectedCeramicProject():String {
+/// Disable tasks-chooser.json
 
-        return userInfo.ceramicProject;
+    function disableTasksChooserFile():Void {
+
+        // Before this ceramic extension was available, projects were using tasks-chooser.json
+        // This file is now obsolete and should not be used anymore as it conflicts with ceramic extension
+        // If it exists, rename it to tasks-chooser_BACKUP.json
+        var tasksChooserPath = Path.join([getRootPath(), '.vscode/tasks-chooser.json']);
+        if (FileSystem.exists(tasksChooserPath)) {
+            trace('Rename .vscode/tasks-chooser.json to .vscode/tasks-chooser_BACKUP.json (file is obsolete)');
+            var backupTasksChooserPath = Path.join([getRootPath(), '.vscode/tasks-chooser_BACKUP.json']);
+            File.saveContent(backupTasksChooserPath, File.getContent(tasksChooserPath));
+            FileSystem.deleteFile(tasksChooserPath);
+        }
 
     }
 
-    function set_selectedCeramicProject(selectedCeramicProject:String):String {
+/// On select command
 
-        var result = userInfo.ceramicProject = selectedCeramicProject;
-        userInfoDirty = true;
-        return result;
+    function runOnSelectCommand():Void {
+
+        var selectedTargetInfo = this.selectedTargetInfo;
+        if (selectedTargetInfo == null)
+            return;
+
+        if (selectedTargetInfo.select == null || selectedTargetInfo.select.command == null)
+            return;
+
+        var args = [];
+        if (selectedTargetInfo.select.args != null) {
+            for (arg in selectedTargetInfo.select.args) {
+                args.push(arg);
+            }
+        }
+
+        var selectedVariantInfo = this.selectedVariantInfo;
+        if (selectedVariantInfo != null && selectedVariantInfo.select != null) {
+            if (selectedVariantInfo.select.args != null) {
+                for (arg in selectedVariantInfo.select.args) {
+                    args.push(arg);
+                }
+            }
+        }
+
+        args = updateArgsCwd(selectedCeramicProject, args);
+
+        trace('On select command: ${selectedTargetInfo.command} ${args.join(' ')}');
+        command(
+            selectedTargetInfo.command,
+            args
+        );
 
     }
 
@@ -211,27 +420,27 @@ class VscodeCeramic {
 
         var filePattern = '**/ceramic.yml';
 
-        trace('FIND FILES (pattern: $filePattern)');
+        trace('File files... (pattern: $filePattern)');
 
         Vscode.workspace.findFiles(filePattern).then(function(result) {
 
             for (uri in result) {
-                trace('DETECT $uri');
+                trace('Detect: $uri');
                 createOrUpdateCeramicPath(uri.path);
             }
 
             watcher = Vscode.workspace.createFileSystemWatcher(filePattern, false, false, false);
     
             context.subscriptions.push(watcher.onDidChange(function(uri) {
-                trace('CHANGE $uri');
+                trace('Change: $uri');
                 createOrUpdateCeramicPath(uri.path);
             }));
             context.subscriptions.push(watcher.onDidCreate(function(uri) {
-                trace('CREATE $uri');
+                trace('Create: $uri');
                 createOrUpdateCeramicPath(uri.path);
             }));
             context.subscriptions.push(watcher.onDidDelete(function(uri) {
-                trace('DELETE $uri');
+                trace('Delete: $uri');
                 removeCeramicPath(uri.path);
             }));
             context.subscriptions.push(watcher);
@@ -246,8 +455,8 @@ class VscodeCeramic {
         if (availableCeramicProjects.indexOf(path) == -1) {
             availableCeramicProjects.push(path);
             sortAlphabetically(availableCeramicProjects);
-            updateFromSelectedCeramicProject();
         }
+        updateFromSelectedCeramicProject();
         
     }
 
@@ -298,10 +507,9 @@ class VscodeCeramic {
     var shouldFetchAgain:Bool = false;
     function fetchTargets() {
 
-        trace('FETCH TARGETS $selectedCeramicProject');
+        trace('Fetch targets and variants: $selectedCeramicProject');
 
         if (fetchingTargets) {
-            trace('- already fetching -');
             shouldFetchAgain = true;
             return;
         }
@@ -310,10 +518,7 @@ class VscodeCeramic {
         command('ceramic', ['ide', 'info', '--print-split-lines'], { cwd: Path.directory(selectedCeramicProject), showError: true }, function(code, out, err) {
             fetchingTargets = false;
 
-            trace('-> fetch result');
-
             if (shouldFetchAgain) {
-                trace('   FETCH AGAIN');
                 shouldFetchAgain = false;
                 fetchTargets();
                 return;
@@ -346,18 +551,66 @@ class VscodeCeramic {
         var title = selectedTarget != null ? selectedTarget : '⚠️ no target';
         var description = selectedTarget != null ? selectedTarget : 'No target available for this ceramic project';
 
-        trace('update from selected target title=$title available=$availableTargets');
+        trace('Update from selected target title=$title available=$availableTargets');
 
         targetStatusBarItem = updateStatusBarItem(
             targetStatusBarItem,
-            title,
+            '▶︎ ' + title,
             description,
             'ceramic.select-target'
         );
 
         if (selectedTarget != null) {
-            // TODO compute variants
+            computeVariants();
         }
+
+    }
+
+    function computeVariants():Void {
+
+        var variants:Array<String> = [];
+
+        var targetInfo = selectedTargetInfo;
+
+        if (targetInfo != null) {
+            var groups:Array<String> = targetInfo.groups;
+            for (variantInfo in ideVariants) {
+                if (variantInfo.group == null || (groups != null && groups.indexOf(variantInfo.group) != -1)) {
+                    variants.push(variantInfo.name);
+                }
+            }
+        }
+
+        availableVariants = variants;
+
+        updateFromSelectedVariant();
+
+    }
+
+    function updateFromSelectedVariant() {
+
+        if (selectedVariant != null && availableVariants.indexOf(selectedVariant) == -1) {
+            selectedVariant = null;
+        }
+        
+        if (selectedVariant == null && availableVariants.length > 0) {
+            selectedVariant = availableVariants[0];
+        }
+
+        var title = selectedVariant != null ? selectedVariant : '-';
+        var description = selectedVariant != null ? selectedVariant : 'No variant selected';
+
+        trace('Update from selected variant title=$title available=$availableVariants');
+
+        variantStatusBarItem = updateStatusBarItem(
+            variantStatusBarItem,
+            'variant: ' + title,
+            description,
+            'ceramic.select-variant'
+        );
+
+        // Run every time project/target/variant changes
+        runOnSelectCommand();
 
     }
 
@@ -384,53 +637,8 @@ class VscodeCeramic {
 
     function loadCeramicContext() {
 
-        trace('LOAD CERAMIC CONTEXT');
-
         if (!watchingWorkspace)
             watchCeramicProjectFiles();
-
-    }
-
-    function reload():Void {
-
-        if (!checkWorkspaceFolder()) {
-            Vscode.window.showErrorMessage("Failed to load: **ceramic.yml** because there is no folder opened.");
-            return;
-        }
-
-        try {
-
-            trace('TRY CERAMIC CMD');
-            command('ceramic', ['ide', 'info'], { cwd: getRootPath(), showError: true }, function(code, out, err) {
-
-                trace('OUT: $out');
-
-            });
-
-            // TODO
-            /*
-            var listPath = Path.join([getRootPath(), '.vscode/tasks-chooser.json']);
-            listContent = Json.parse(File.getContent(listPath));
-
-            tasksPath = Path.join([getRootPath(), '.vscode/tasks.json']);
-            var tasksContent:Dynamic = null;
-            try {
-                tasksContent = Json.parse(File.getContent(tasksPath));
-            } catch (e1:Dynamic) {}
-
-            var targetIndex = 0;
-            if (tasksContent != null && tasksContent.chooserIndex != null) {
-                targetIndex = tasksContent.chooserIndex;
-            }
-            targetIndex = cast Math.min(targetIndex, listContent.items.length - 1);
-
-            setChooserIndex(targetIndex);
-            */
-        }
-        catch (e:Dynamic) {
-            Vscode.window.showErrorMessage("Failed to load: **ceramic.yml**. Please check its content is valid.");
-            js.Node.console.error(e);
-        }
 
     }
 
@@ -477,6 +685,41 @@ class VscodeCeramic {
 
     }
 
+    function updateArgsCwd(selectedCeramicProject:String, args:Array<String>):Array<String> {
+
+        args = [].concat(args);
+
+        var targetCwd = null;
+        
+        var cwdIndex = args.indexOf('--cwd');
+        if (cwdIndex != -1) {
+            targetCwd = args[cwdIndex + 1];
+        }
+
+        if (selectedCeramicProject != null) {
+            if (targetCwd == null) {
+                targetCwd = Path.directory(selectedCeramicProject);
+                if (Path.normalize(targetCwd) != Path.normalize(getRootPath())) {
+                    args.push('--cwd');
+                    args.push(computeShortPath(targetCwd));
+                }
+                else {
+                    targetCwd = null;
+                }
+
+                if (targetCwd != null) {
+                    var hxmlOutputIndex = args.indexOf('--hxml-output');
+                    if (hxmlOutputIndex != -1) {
+                        args[hxmlOutputIndex + 1] = Path.join([targetCwd, 'completion.hxml']);
+                    }
+                }
+            }
+        }
+
+        return args;
+
+    }
+
     function computeShortPath(path:String):String {
 
         var rootPath = getRootPath();
@@ -511,13 +754,106 @@ class VscodeCeramic {
 
     function selectTarget() {
 
-        // TODO
+        var pickItems:Array<Dynamic> = [];
+        var index = 0;
+        var availableTargets = [].concat(this.availableTargets);
+        for (target in availableTargets) {
+            var description = '';
+            for (targetInfo in ideTargets) {
+                if (target == targetInfo.name) {
+                    description = targetInfo.command;
+                    if (targetInfo.args != null && targetInfo.args.length > 0) {
+                        description += ' ' + targetInfo.args.join(' ');
+                    }
+                }
+            }
+            pickItems.push({
+                label: target,
+                description: description,
+                index: index,
+            });
+            index++;
+        }
+
+        // Put selected project at the top
+        var selectedIndex = availableTargets.indexOf(selectedTarget);
+        if (selectedIndex != -1) {
+            var selectedItem = pickItems[selectedIndex];
+            pickItems.splice(selectedIndex, 1);
+            pickItems.unshift(selectedItem);
+        }
+
+        var placeHolder = 'Select target';
+
+        Vscode.window.showQuickPick(pickItems, { placeHolder: placeHolder }).then(function(choice:Dynamic) {
+            if (choice == null || choice.index == selectedIndex) {
+                return;
+            }
+            
+            try {
+                selectedTarget = availableTargets[choice.index];
+                updateFromSelectedTarget();
+            }
+            catch (e:Dynamic) {
+                Vscode.window.showErrorMessage("Failed to select ceramic target: " + e);
+                js.Node.console.error(e);
+            }
+
+        });
 
     }
 
     function selectVariant() {
 
-        // TODO
+        var pickItems:Array<Dynamic> = [];
+        var index = 0;
+        var availableVariants = [].concat(this.availableVariants);
+        var targetInfo = selectedTargetInfo;
+        for (variant in availableVariants) {
+            var description = '';
+            for (variantInfo in ideVariants) {
+                if (variantInfo.name == variant) {
+                    if (variantInfo.group == null || (targetInfo != null && targetInfo.groups != null && targetInfo.groups.indexOf(variantInfo.group) != -1)) {
+                        if (variantInfo.args != null && variantInfo.args.length > 0) {
+                            description += variantInfo.args.join(' ');
+                            break;
+                        }
+                    }
+                }
+            }
+            pickItems.push({
+                label: variant,
+                description: description,
+                index: index,
+            });
+            index++;
+        }
+
+        // Put selected project at the top
+        var selectedIndex = availableVariants.indexOf(selectedVariant);
+        if (selectedIndex != -1) {
+            var selectedItem = pickItems[selectedIndex];
+            pickItems.splice(selectedIndex, 1);
+            pickItems.unshift(selectedItem);
+        }
+
+        var placeHolder = 'Select variant';
+
+        Vscode.window.showQuickPick(pickItems, { placeHolder: placeHolder }).then(function(choice:Dynamic) {
+            if (choice == null || choice.index == selectedIndex) {
+                return;
+            }
+            
+            try {
+                selectedVariant = availableVariants[choice.index];
+                updateFromSelectedVariant();
+            }
+            catch (e:Dynamic) {
+                Vscode.window.showErrorMessage("Failed to select ceramic variant: " + e);
+                js.Node.console.error(e);
+            }
+
+        });
 
     }
 
@@ -530,7 +866,8 @@ class VscodeCeramic {
             context.subscriptions.push(statusBarItem);
         }
         
-        statusBarItem.text = "[ " + title + " ]";
+        //statusBarItem.text = "[ " + title + " ]";
+        statusBarItem.text = title;
         statusBarItem.tooltip = description != null ? description : '';
         statusBarItem.command = command;
         statusBarItem.show();
@@ -538,65 +875,6 @@ class VscodeCeramic {
         return statusBarItem;
 
     }
-
-    /*
-    function setChooserIndex(targetIndex:Int) {
-
-        if (!checkWorkspaceFolder()) {
-            return;
-        }
-
-        chooserIndex = targetIndex;
-
-        var item = Json.parse(Json.stringify(listContent.items[chooserIndex]));
-
-        // Merge with base item
-        if (listContent.baseItem != null) {
-            for (key in Reflect.fields(listContent.baseItem)) {
-                if (!Reflect.hasField(item, key)) {
-                    Reflect.setField(item, key, Reflect.field(listContent.baseItem, key));
-                }
-            }
-        }
-
-        // Add chooser index
-        item.chooserIndex = chooserIndex;
-        
-        // Check if there is an onSelect command
-        var onSelect:Dynamic = null;
-        if (item != null) {
-            onSelect = item.onSelect;
-            if (onSelect != null) {
-                Reflect.deleteField(item, "onSelect");
-            }
-        }
-
-        // Update tasks.json
-        if (item != null) {
-            File.saveContent(tasksPath, Json.stringify(item, null, "    "));
-        }
-
-        // Run onSelect command, if any
-        if (onSelect != null) {
-            var args:Array<String> = onSelect.args;
-            if (args == null) args = [];
-            var showError = onSelect.showError;
-            var proc = ChildProcess.spawn(onSelect.command, args, {cwd: getRootPath()});
-            proc.stdout.on('data', function(data) {
-                js.Node.process.stdout.write(data);
-            });
-            proc.stderr.on('data', function(data) {
-                js.Node.process.stderr.write(data);
-            });
-            proc.on('close', function(code) {
-                if (code != 0 && showError) {
-                    Vscode.window.showErrorMessage("Failed run onSelect command: exited with code " + code);
-                }
-            });
-        }
-
-    }
-    */
 
 /// Internal helpers
 

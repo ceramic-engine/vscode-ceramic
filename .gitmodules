@@ -1,0 +1,3 @@
+[submodule "git/tracker"]
+	path = git/tracker
+	url = https://github.com/jeremyfa/tracker.git
