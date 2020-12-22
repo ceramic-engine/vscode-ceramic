@@ -1,20 +1,35 @@
 package;
 
-import sys.FileSystem;
+import vscode.TaskDefinition;
+import vscode.TaskGroup;
+import haxe.ds.ReadOnlyArray;
+import vscode.ShellExecution;
+import vscode.ProcessExecution;
 import tracker.Tracker;
 import tracker.DefaultBackend;
 import tracker.Model;
 import tracker.Entity;
+
 import haxe.Timer;
-import js.html.Console;
-import sys.io.File;
 import haxe.io.Path;
 import haxe.Json;
+
 import js.node.ChildProcess;
+import js.html.Console;
+import sys.io.File;
+import sys.FileSystem;
 
 import vscode.ExtensionContext;
 import vscode.StatusBarItem;
 import vscode.FileSystemWatcher;
+import vscode.CancellationToken;
+import vscode.Disposable;
+import vscode.TaskProvider;
+import vscode.ProviderResult;
+import vscode.Task;
+import vscode.TaskScope;
+import vscode.TaskRevealKind;
+import vscode.TaskPanelKind;
 
 using StringTools;
 using tracker.SaveModel;
@@ -274,6 +289,82 @@ class VscodeCeramic extends Model {
 
     }
 
+    @compute function currentTaskCommand():String {
+
+        var selectedCeramicProject = this.selectedCeramicProject;
+        if (selectedCeramicProject == null) {
+            return null;
+        }
+
+        var selectedTarget = this.selectedTarget;
+        if (selectedTarget == null) {
+            return null;
+        }
+
+        var selectedTargetInfo = this.selectedTargetInfo;
+        if (selectedTargetInfo == null) {
+            return null;
+        }
+
+        return selectedTargetInfo.command;
+        
+        var taskArgs:Array<String> = [];
+        if (selectedTargetInfo.args != null) {
+            taskArgs = [].concat(selectedTargetInfo.args);
+        }
+        else {
+            taskArgs = [];
+        }
+        if (selectedVariantInfo != null) {
+            if (selectedVariantInfo.args != null && selectedVariantInfo.args.length > 0) {
+                for (arg in selectedVariantInfo.args) {
+                    taskArgs.push(arg);
+                }
+            }
+        }
+
+        taskArgs = updateArgsCwd(selectedCeramicProject, taskArgs);
+
+    }
+
+    @compute function currentTaskArgs():Array<String> {
+
+        var selectedCeramicProject = this.selectedCeramicProject;
+        if (selectedCeramicProject == null) {
+            return null;
+        }
+
+        var selectedTarget = this.selectedTarget;
+        if (selectedTarget == null) {
+            return null;
+        }
+
+        var selectedTargetInfo = this.selectedTargetInfo;
+        if (selectedTargetInfo == null) {
+            return null;
+        }
+        
+        var taskArgs:Array<String> = [];
+        if (selectedTargetInfo.args != null) {
+            taskArgs = [].concat(selectedTargetInfo.args);
+        }
+        else {
+            taskArgs = [];
+        }
+        if (selectedVariantInfo != null) {
+            if (selectedVariantInfo.args != null && selectedVariantInfo.args.length > 0) {
+                for (arg in selectedVariantInfo.args) {
+                    taskArgs.push(arg);
+                }
+            }
+        }
+
+        taskArgs = updateArgsCwd(selectedCeramicProject, taskArgs);
+
+        return taskArgs;
+
+    }
+
 /// Lifecycle
 
     function new(context:ExtensionContext) {
@@ -303,6 +394,7 @@ class VscodeCeramic extends Model {
         loadCeramicContext();
         loadTasksJson();
         disableTasksChooserFile();
+        initTaskProvider();
 
     }
 
@@ -313,7 +405,7 @@ class VscodeCeramic extends Model {
         this.loadFromKey('ceramicUserInfo');
         this.autoSaveAsKey('ceramicUserInfo');
 
-        Tracker.backend.interval(this, 0.5, updateTasksJson);
+        //Tracker.backend.interval(this, 0.5, updateTasksJson);
 
     }
 
@@ -937,6 +1029,82 @@ class VscodeCeramic extends Model {
                 done = null;
             }
         });
+
+    }
+
+/// Task provider
+
+    var taskProvider:Disposable;
+
+    function initTaskProvider():Void {
+
+        taskProvider = Vscode.tasks.registerTaskProvider('ceramic', {
+            provideTasks: provideTasks,
+            resolveTask: resolveTask
+        });
+
+    }
+
+	/**
+	 * Provides tasks.
+	 * @param token A cancellation token.
+	 * @return an array of tasks
+	 */
+    function provideTasks(?token:CancellationToken):ProviderResult<Array<Task>> {
+
+        var task = createCeramicTask();
+
+        return [task];
+
+    }
+
+    /**
+     * Resolves a task that has no [`execution`](#Task.execution) set. Tasks are
+     * often created from information found in the `tasks.json`-file. Such tasks miss
+     * the information on how to execute them and a task provider must fill in
+     * the missing information in the `resolveTask`-method. This method will not be
+     * called for tasks returned from the above `provideTasks` method since those
+     * tasks are always fully resolved. A valid default implementation for the
+     * `resolveTask` method is to return `undefined`.
+     *
+     * @param task The task to resolve.
+     * @param token A cancellation token.
+     * @return The resolved task
+     */
+    function resolveTask(task:Task, ?token:CancellationToken):ProviderResult<Task> {
+
+        return task;
+
+    }
+
+    function createCeramicTask():Task {
+
+        var cwd = getRootPath();
+
+        var execution = new ShellExecution(currentTaskCommand, currentTaskArgs, {
+            cwd: cwd
+        });
+
+        var definition:TaskDefinition = {
+            type: 'ceramic'
+        };
+        Reflect.setField(definition, 'args', 'active configuration');
+
+        var problemMatchers = ["$haxe-absolute", "$haxe", "$haxe-error", "$haxe-trace"];
+
+        var task = new Task(definition, TaskScope.Workspace, 'active configuration', 'ceramic', execution, problemMatchers);
+        task.group = TaskGroup.Build;
+        task.presentationOptions = {
+            "echo": true,
+            "reveal": TaskRevealKind.Always,
+            "focus": false,
+            "panel": TaskPanelKind.Shared
+        };
+        task.runOptions = cast {
+            'instanceLimit': 1
+        };
+
+        return task;
 
     }
 

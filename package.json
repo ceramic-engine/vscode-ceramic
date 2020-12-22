@@ -1,54 +1,79 @@
 {
-    "name": "ceramic",
-    "displayName": "Ceramic",
-    "description": "An extension to use ceramic engine with Visual Studio Code",
-    "publisher": "jeremyfa",
-    "license": "MIT",
-    "version": "0.1.0",
-    "engines": {
-        "vscode": "^1.4.0"
-    },
-    "activationEvents": [
-        "workspaceContains:**/ceramic.yml",
-        "onCommand:ceramic.load"
-    ],
-    "icon": "images/ceramic-logo.png",
-    "author": "Jeremy Faivre",
-    "extensionDependencies": [
-        "nadako.vshaxe"
-    ],
-    "contributes": {
-        "commands": [
-            {
-                "title": "Load ceramic context",
-                "command": "ceramic.load",
-                "category": "Ceramic"
-            },
-            {
-                "title": "Select target",
-                "command": "ceramic.select-target",
-                "category": "Ceramic"
-            },
-            {
-                "title": "Select ceramic project",
-                "command": "ceramic.select-ceramic-project",
-                "category": "Ceramic"
-            },
-            {
-                "title": "Select variant",
-                "command": "ceramic.select-variant",
-                "category": "Ceramic"
-            }
-        ]
-    },
-    "bugs": "https://github.com/ceramic-engine/vscode-ceramic/issues",
-    "homepage": "https://github.com/ceramic-engine/vscode-ceramic/blob/master/README.md",
-    "repository": {
-        "type": "git",
-        "url": "https://github.com/ceramic-engine/vscode-ceramic.git"
-    },
-    "scripts": {
-        "vscode:prepublish": "haxe build.hxml"
-    },
-    "main": "./vscode-ceramic"
+	"name": "ceramic",
+	"displayName": "Ceramic",
+	"description": "An extension to use ceramic engine with Visual Studio Code",
+	"publisher": "jeremyfa",
+	"license": "MIT",
+	"version": "0.2.0",
+	"engines": {
+		"vscode": "^1.4.0"
+	},
+	"activationEvents": [
+		"workspaceContains:**/ceramic.yml",
+		"onCommand:ceramic.load"
+	],
+	"icon": "images/ceramic-logo.png",
+	"author": "Jeremy Faivre",
+	"extensionDependencies": [
+		"nadako.vshaxe"
+	],
+	"contributes": {
+		"commands": [
+			{
+				"title": "Load ceramic context",
+				"command": "ceramic.load",
+				"category": "Ceramic"
+			},
+			{
+				"title": "Select target",
+				"command": "ceramic.select-target",
+				"category": "Ceramic"
+			},
+			{
+				"title": "Select ceramic project",
+				"command": "ceramic.select-ceramic-project",
+				"category": "Ceramic"
+			},
+			{
+				"title": "Select variant",
+				"command": "ceramic.select-variant",
+				"category": "Ceramic"
+			}
+		],
+		"taskDefinitions": [
+			{
+				"type": "ceramic",
+				"required": [
+					"args"
+				],
+				"properties": {
+					"args": {
+						"type": "string",
+						"description": "Which arguments to use.",
+						"enum": [
+							"active configuration"
+						],
+						"enumDescriptions": [
+							"Use the arguments from the active ceramic configuration."
+						]
+					}
+				}
+			}
+		]
+	},
+	"bugs": "https://github.com/ceramic-engine/vscode-ceramic/issues",
+	"homepage": "https://github.com/ceramic-engine/vscode-ceramic/blob/master/README.md",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/ceramic-engine/vscode-ceramic.git"
+	},
+	"scripts": {
+		"vscode:prepublish": "haxe build.hxml"
+	},
+	"main": "./vscode-ceramic",
+	"__metadata": {
+		"id": "85a54d06-d746-4cc6-a68b-5c169693effe",
+		"publisherDisplayName": "Jérémy Faivre",
+		"publisherId": "fb5aba49-1389-4715-8bdc-7b56941284a7"
+	}
 }
