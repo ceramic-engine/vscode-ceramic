@@ -12,6 +12,11 @@
         "workspaceContains:**/ceramic.yml",
         "onCommand:ceramic.load"
     ],
+    "icon": "images/ceramic-logo.png",
+    "author": "Jeremy Faivre",
+    "extensionDependencies": [
+        "nadako.vshaxe"
+    ],
     "contributes": {
         "commands": [
             {
