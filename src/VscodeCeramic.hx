@@ -392,8 +392,8 @@ class VscodeCeramic extends Model {
         }));
 
         loadCeramicContext();
-        loadTasksJson();
-        disableTasksChooserFile();
+        //loadTasksJson();
+        //disableTasksChooserFile();
         initTaskProvider();
 
     }
