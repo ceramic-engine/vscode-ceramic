@@ -3,3 +3,4 @@
 /.haxelib
 /.vscode/.BROWSE.VC.DB
 .DS_Store
+.vsixmanifest
