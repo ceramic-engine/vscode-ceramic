@@ -1,5 +1,7 @@
 package;
 
+import haxe.SysTools;
+import js.Node;
 import vscode.TaskDefinition;
 import vscode.TaskGroup;
 import haxe.ds.ReadOnlyArray;
@@ -1006,7 +1008,53 @@ class VscodeCeramic extends Model {
         var outStr = '';
         var errStr = '';
 
-        var proc = ChildProcess.spawn(cmd, args, {cwd: cwd});
+        var execCommand = cmd;
+
+        if (args.length > 0) {
+            if (Sys.systemName() == 'Windows') {
+                for (i in 0...args.length) {
+                    execCommand += ' ' + SysTools.quoteWinArg(args[i], true);
+                }
+            }
+            else {
+                for (i in 0...args.length) {
+                    execCommand += ' ' + SysTools.quoteUnixArg(args[i]);
+                }
+            }
+        }
+
+        if (Sys.systemName() == 'Windows') {
+            if (cwd.charAt(0) == '/' && cwd.charAt(2) == ':') {
+                cwd = cwd.substring(1);
+            }
+        }
+
+        ChildProcess.exec(execCommand, {
+            cwd: cwd
+        },  function(err, stdout, stderr) {
+            if (err != null && showError) {
+                var cmdStr = cmd;
+                if (args.length > 0) {
+                    cmdStr += ' ' + args.join(' ');
+                }
+                Vscode.window.showErrorMessage('Failed to run command: `$cmdStr` (signal=' + err.signal + ' code=' + err.code + ')');
+            }
+
+            if (err != null) {
+                trace(err);
+            }
+
+            outStr += stdout;
+            errStr += stderr;
+
+            if (done != null) {
+                done(err != null ? err.code : 0, outStr, errStr);
+                done = null;
+            }
+        });
+
+        /*
+        var proc = ChildProcess.spawn(cmd, args);
 
         proc.stdout.on('data', function(data) {
             outStr += data;
@@ -1029,6 +1077,7 @@ class VscodeCeramic extends Model {
                 done = null;
             }
         });
+        */
 
     }
 
