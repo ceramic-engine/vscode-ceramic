@@ -4,7 +4,7 @@
 	"description": "An extension to use ceramic engine with Visual Studio Code",
 	"publisher": "jeremyfa",
 	"license": "MIT",
-	"version": "0.2.0",
+	"version": "0.2.1",
 	"engines": {
 		"vscode": "^1.4.0"
 	},
