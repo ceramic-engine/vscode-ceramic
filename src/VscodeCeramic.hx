@@ -49,6 +49,8 @@ typedef IdeInfoTargetItem = {
 
     @:optional var select:IdeInfoTargetSelectItem;
 
+    @:optional var cwd:String;
+
 }
 
 typedef IdeInfoTargetSelectItem = {
@@ -267,7 +269,7 @@ class VscodeCeramic extends Model {
             }
         }
 
-        taskArgs = updateArgsCwd(selectedCeramicProject, taskArgs);
+        taskArgs = updateArgsCwd(selectedCeramicProject, selectedTargetInfo, taskArgs);
 
         task.args = taskArgs;
         task.presentation = {
@@ -325,7 +327,7 @@ class VscodeCeramic extends Model {
             }
         }
 
-        taskArgs = updateArgsCwd(selectedCeramicProject, taskArgs);
+        taskArgs = updateArgsCwd(selectedCeramicProject, selectedTargetInfo, taskArgs);
 
     }
 
@@ -361,7 +363,7 @@ class VscodeCeramic extends Model {
             }
         }
 
-        taskArgs = updateArgsCwd(selectedCeramicProject, taskArgs);
+        taskArgs = updateArgsCwd(selectedCeramicProject, selectedTargetInfo, taskArgs);
 
         return taskArgs;
 
@@ -494,7 +496,9 @@ class VscodeCeramic extends Model {
             }
         }
 
-        args = updateArgsCwd(selectedCeramicProject, args);
+        args = updateArgsCwd(selectedCeramicProject, selectedTargetInfo, args);
+        var cwd = getRootPath();
+        cwd = extractArgsCwd(cwd, args, true);
 
         trace('On select command: ${selectedTargetInfo.select.command} ${args.join(' ')}');
         command(
@@ -782,20 +786,36 @@ class VscodeCeramic extends Model {
 
     }
 
-    function updateArgsCwd(selectedCeramicProject:String, args:Array<String>):Array<String> {
+    function updateArgsCwd(selectedCeramicProject:String, selectedTargetInfo:IdeInfoTargetItem, args:Array<String>):Array<String> {
 
         args = [].concat(args);
 
+        var baseCwd = null;
+        if (selectedTargetInfo != null && selectedTargetInfo.cwd != null) {
+            baseCwd = selectedTargetInfo.cwd;
+        }
+
         var targetCwd = null;
-        
+
         var cwdIndex = args.indexOf('--cwd');
         if (cwdIndex != -1) {
             targetCwd = args[cwdIndex + 1];
+            if (baseCwd != null && !Path.isAbsolute(targetCwd)) {
+                targetCwd = Path.normalize(Path.join([baseCwd, targetCwd]));
+            }
         }
 
         if (selectedCeramicProject != null) {
             if (targetCwd == null) {
                 targetCwd = Path.directory(selectedCeramicProject);
+                if (baseCwd != null) {
+                    if (Path.isAbsolute(baseCwd)) {
+                        targetCwd = baseCwd;
+                    }
+                    else {
+                        targetCwd = Path.normalize(Path.join([targetCwd, baseCwd]));
+                    }
+                }
                 if (Path.normalize(targetCwd) != Path.normalize(getRootPath())) {
                     args.push('--cwd');
                     args.push(computeShortPath(targetCwd));
@@ -805,9 +825,19 @@ class VscodeCeramic extends Model {
                 }
 
                 if (targetCwd != null) {
+                    // Update hxml output
+                    var hxmlOutputTarget = getRootPath();
                     var hxmlOutputIndex = args.indexOf('--hxml-output');
                     if (hxmlOutputIndex != -1) {
-                        args[hxmlOutputIndex + 1] = Path.join([targetCwd, 'completion.hxml']);
+                        args[hxmlOutputIndex + 1] = Path.join([hxmlOutputTarget, 'completion.hxml']);
+                    }
+                    else {
+                        // Match `ceramic hxml --output completion.hxml`
+                        var hxmlIndex = args.indexOf('hxml');
+                        var outputIndex = args.indexOf('--output');
+                        if (hxmlIndex == 1 && outputIndex != -1 && args[outputIndex + 1] == 'completion.hxml') {
+                            args[outputIndex + 1] = Path.join([hxmlOutputTarget, 'completion.hxml']);
+                        }
                     }
                 }
             }
@@ -1129,11 +1159,44 @@ class VscodeCeramic extends Model {
 
     }
 
+    function extractArgsCwd(cwd:String, args:Array<String>, updateArgs:Bool = false):String {
+
+        var customCwdIndex = args.indexOf('--cwd');
+        if (customCwdIndex != -1 && args.length > customCwdIndex + 1) {
+            var customCwd = args[customCwdIndex + 1];
+            if (!Path.isAbsolute(customCwd)) {
+                customCwd = Path.join([cwd, customCwd]);
+            }
+            cwd = customCwd;
+            if (updateArgs) {
+                args.splice(customCwdIndex, 2);
+            }
+        }
+
+        return cwd;
+
+    }
+
     function createCeramicTask():Task {
 
         var cwd = getRootPath();
 
-        var execution = new ShellExecution(currentTaskCommand, currentTaskArgs, {
+        var taskCommand = currentTaskCommand;
+        var taskArgs = currentTaskArgs;
+        if (taskArgs == null) {
+            taskArgs = [];
+        }
+        else {
+            taskArgs = [].concat(taskArgs);
+        }
+        if (taskCommand == null) {
+            taskCommand = 'echo';
+            taskArgs = ['No command defined'];
+        }
+
+        cwd = extractArgsCwd(cwd, taskArgs, true);
+
+        var execution = new ShellExecution(taskCommand, taskArgs, {
             cwd: cwd
         });
 
