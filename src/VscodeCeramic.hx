@@ -496,10 +496,13 @@ class VscodeCeramic extends Model {
 
         args = updateArgsCwd(selectedCeramicProject, args);
 
-        trace('On select command: ${selectedTargetInfo.command} ${args.join(' ')}');
+        trace('On select command: ${selectedTargetInfo.select.command} ${args.join(' ')}');
         command(
-            selectedTargetInfo.command,
-            args
+            selectedTargetInfo.select.command,
+            args,
+            {
+                cwd: cwd
+            }
         );
 
     }
