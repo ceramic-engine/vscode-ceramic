@@ -117,6 +117,10 @@ class TrackerBackend extends DefaultBackend {
 
 class VscodeCeramic extends Model {
 
+/// Internal
+
+    static var RE_NORMALIZED_WINDOWS_PATH_PREFIX = ~/^\/[a-zA-Z]:\//;
+
 /// Exposed
 
     static var instance:VscodeCeramic = null;
@@ -752,7 +756,7 @@ class VscodeCeramic extends Model {
         for (path in availableCeramicProjects) {
             pickItems.push({
                 label: shortPaths[index],
-                description: path,
+                description: cleanAbsolutePath(path),
                 index: index,
             });
             index++;
@@ -851,8 +855,11 @@ class VscodeCeramic extends Model {
 
         var rootPath = getRootPath();
 
-        if (rootPath != null && path.startsWith(rootPath)) {
+        if (rootPath != null && path.toLowerCase().startsWith(rootPath.toLowerCase())) {
             return path.substring(rootPath.length + 1);
+        }
+        else if (Sys.systemName() == 'Windows' && rootPath.startsWith('/')) {
+            return rootPath.substring(1);
         }
         else {
             return path;
@@ -862,20 +869,25 @@ class VscodeCeramic extends Model {
 
     function computeShortPaths(paths:Array<String>):Array<String> {
 
-        var rootPath = getRootPath();
-
         var result = [];
 
         for (path in paths) {
-            if (rootPath != null && path.startsWith(rootPath)) {
-                result.push(path.substring(rootPath.length + 1));
-            }
-            else {
-                result.push(path);
-            }
+            result.push(computeShortPath(path));
         }
 
         return result;
+
+    }
+
+    function cleanAbsolutePath(path:String):String {
+
+        if (Sys.systemName() == 'Windows') {
+            if (path != null && path.startsWith('/') && RE_NORMALIZED_WINDOWS_PATH_PREFIX.match(path)) {
+                return path.substring(1);
+            }
+        }
+        
+        return path;
 
     }
 
@@ -1022,9 +1034,33 @@ class VscodeCeramic extends Model {
 
     }
 
+    function fixWindowsArgsPaths(args:Array<String>):Void {
+
+        // Remove absolute path leading slash on windows, if any
+        // This let us accept absolute paths that start with `/c:/` instead of `c:/`
+        // which could happen after joining/normalizing paths via node.js or vscode extension
+        if (Sys.systemName() == 'Windows') {
+            var i = 0;
+            while (i + 1 < args.length) {
+                if (args[i].startsWith('--')) {
+                    var value = args[i + 1];
+                    if (value != null && value.startsWith('/') && RE_NORMALIZED_WINDOWS_PATH_PREFIX.match(value)) {
+                        args[i + 1] = value.substring(1);
+                        i++;
+                    }
+                }
+                i++;
+            }
+        }
+
+    }
+
     function command(cmd:String, ?args:Array<String>, ?options:{?cwd:String, ?showError:Bool}, ?done:Int->String->String->Void):Void {
 
         if (args == null) args = [];
+        else args = [].concat(args);
+
+        fixWindowsArgsPaths(args);
 
         var cwd = getRootPath();
         var showError = false;
@@ -1193,6 +1229,8 @@ class VscodeCeramic extends Model {
             taskCommand = 'echo';
             taskArgs = ['No command defined'];
         }
+
+        fixWindowsArgsPaths(taskArgs);
 
         cwd = extractArgsCwd(cwd, taskArgs, true);
 
