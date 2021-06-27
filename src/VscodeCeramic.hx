@@ -399,6 +399,7 @@ class VscodeCeramic extends Model {
             selectVariant();
         }));
 
+        patchHaxeExecutableSettings();
         loadCeramicContext();
         //loadTasksJson();
         //disableTasksChooserFile();
@@ -414,6 +415,58 @@ class VscodeCeramic extends Model {
         this.autoSaveAsKey('ceramicUserInfo');
 
         //Tracker.backend.interval(this, 0.5, updateTasksJson);
+
+    }
+
+/// Update settings.json
+
+    function patchHaxeExecutableSettings():Void {
+
+        try {
+            var rootPath = getRootPath();
+            var isWindows = (Sys.systemName() == 'Windows');
+            if (isWindows)
+                rootPath = fixWindowsPath(rootPath);
+            var settingsPath = Path.join([rootPath, '.vscode/settings.json']);
+            var settings = Json.parse(File.getContent(settingsPath));
+            if (settings != null) {
+                var patched = false;
+                for (cmdName in ['haxe', 'haxelib']) {
+                    var name = cmdName + '.executable';
+                    if (Reflect.field(settings, name) != null) {
+                        var cmdPath:String = Reflect.field(settings, name);
+                        if (!Path.isAbsolute(cmdPath)) {
+                            cmdPath = Path.join([rootPath, cmdPath]);
+                        }
+                        cmdPath = Path.normalize(cmdPath);
+                        if (isWindows
+                        && cmdPath.endsWith('tools/$cmdName')
+                        && FileSystem.exists(Path.join([Path.directory(cmdPath), 'ceramic.js']))
+                        ) {
+                            Reflect.setField(settings, name, Reflect.field(settings, name) + '.cmd');
+                            patched = true;
+                        }
+                        else if (!isWindows
+                        && cmdPath.endsWith('tools/$cmdName.cmd')
+                        && FileSystem.exists(Path.join([Path.directory(cmdPath), 'ceramic.js']))
+                        ) {
+                            var toReplace:String = Reflect.field(settings, name);
+                            toReplace = toReplace.substring(0, toReplace.length - 4);
+                            Reflect.setField(settings, name, toReplace);
+                            patched = true;
+                        }
+                    }
+                }
+                if (patched) {
+                    trace('Patch .vscode/settings.json to point to proper haxe binary.');
+                    File.saveContent(settingsPath, Json.stringify(settings, null, '    '));
+                }
+            }
+        }
+        catch (e1:Dynamic) {
+            trace(e1);
+            trace('Failed to patch haxe executable setting in .vscode/settings.json (maybe there is none yet)');
+        }
 
     }
 
@@ -1031,6 +1084,15 @@ class VscodeCeramic extends Model {
         }
 
         return true;
+
+    }
+
+    function fixWindowsPath(path:String):String {
+
+        if (path != null && path.startsWith('/') && RE_NORMALIZED_WINDOWS_PATH_PREFIX.match(path)) {
+            path = path.substring(1);
+        }
+        return path;
 
     }
 
