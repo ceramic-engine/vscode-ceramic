@@ -159,6 +159,8 @@ class VscodeCeramic extends Model {
 
     var lastTasksJson:String = null;
 
+    var ceramicToolsPath:String = null;
+
     @observe var ideTargets:Array<IdeInfoTargetItem> = null;
 
     @observe var ideVariants:Array<IdeInfoVariantItem> = null;
@@ -399,11 +401,25 @@ class VscodeCeramic extends Model {
             selectVariant();
         }));
 
-        patchHaxeExecutableSettings();
-        loadCeramicContext();
-        //loadTasksJson();
-        //disableTasksChooserFile();
-        initTaskProvider();
+        resolveCeramicToolsPath(function() {
+
+            patchHaxeExecutableSettings();
+            loadCeramicContext();
+            //loadTasksJson();
+            //disableTasksChooserFile();
+            initTaskProvider();
+        });
+
+    }
+
+    function resolveCeramicToolsPath(next:Void->Void) {
+
+        command('ceramic', ['path'], { cwd: getRootPath() }, function(code, out, err) {
+            if (out != null && out.trim().length != 0) {
+                ceramicToolsPath = out.trim();
+            }
+            next();
+        });
 
     }
 
@@ -443,6 +459,7 @@ class VscodeCeramic extends Model {
                         && cmdPath.endsWith('tools/$cmdName')
                         && FileSystem.exists(Path.join([Path.directory(cmdPath), 'ceramic.js']))
                         ) {
+                            // Add ".cmd" to command path
                             Reflect.setField(settings, name, Reflect.field(settings, name) + '.cmd');
                             patched = true;
                         }
@@ -450,15 +467,35 @@ class VscodeCeramic extends Model {
                         && cmdPath.endsWith('tools/$cmdName.cmd')
                         && FileSystem.exists(Path.join([Path.directory(cmdPath), 'ceramic.js']))
                         ) {
+                            // Remove ".cmd" to command path
                             var toReplace:String = Reflect.field(settings, name);
                             toReplace = toReplace.substring(0, toReplace.length - 4);
                             Reflect.setField(settings, name, toReplace);
                             patched = true;
                         }
+                        else if (
+                            (cmdPath.endsWith('/tools/$cmdName') || cmdPath.endsWith('/tools/$cmdName.cmd'))
+                            && !FileSystem.exists(cmdPath)) {
+                            // Command path is invalid, but seems to point to a ceramic installation.
+                            // Try to replace it with current ceramic installation.
+                            if (ceramicToolsPath != null && FileSystem.exists(ceramicToolsPath)) {
+                                var cmdPathParts = cmdPath.split('/');
+                                var relativeToolsPath = getRelativePath(ceramicToolsPath, rootPath);
+                                Reflect.setField(settings, name, Path.join([
+                                    relativeToolsPath,
+                                    cmdPathParts[cmdPathParts.length - 1]
+                                ]));
+                            }
+                            else {
+                                // If no ceramic installation known, simply remove the fields
+                                Reflect.deleteField(settings, name);
+                            }
+                            patched = true;
+                        }
                     }
                 }
                 if (patched) {
-                    trace('Patch .vscode/settings.json to point to proper haxe binary.');
+                    Vscode.window.showInformationMessage('Auto-patched .vscode/settings.json to point to proper haxe/haxelib binaries.');
                     File.saveContent(settingsPath, Json.stringify(settings, null, '    '));
                 }
             }
@@ -1320,6 +1357,49 @@ class VscodeCeramic extends Model {
         };
 
         return task;
+
+    }
+
+    function getRelativePath(absolutePath:String, relativeTo:String):String {
+
+        var isWindows = Sys.systemName() == 'Windows';
+
+        if (isWindows) {
+            var driveA = Path.normalize(absolutePath).substr(0, 2).toLowerCase();
+            var driveB = Path.normalize(relativeTo).substr(0, 2).toLowerCase();
+            if (driveA.charAt(1) == ':' && driveB.charAt(1) == ':' && driveA != driveB) {
+                // Path located on different drives, can't be relative
+                return absolutePath;
+            }
+        }
+
+        var fromParts = Path.normalize(relativeTo).substr(isWindows ? 3 : 1).split('/');
+        var toParts = Path.normalize(absolutePath).substr(isWindows ? 3 : 1).split('/');
+
+        var length:Int = cast Math.min(fromParts.length, toParts.length);
+        var samePartsLength = length;
+        for (i in 0...length) {
+            if (fromParts[i] != toParts[i]) {
+                samePartsLength = i;
+                break;
+            }
+        }
+
+        var outputParts = [];
+        for (i in samePartsLength...fromParts.length) {
+            outputParts.push('..');
+        }
+
+        outputParts = outputParts.concat(toParts.slice(samePartsLength));
+
+        var result = outputParts.join('/');
+        if (absolutePath.endsWith('/') && !result.endsWith('/')) {
+            result += '/';
+        }
+
+        if (!result.startsWith('.')) result = './' + result;
+
+        return result;
 
     }
 
