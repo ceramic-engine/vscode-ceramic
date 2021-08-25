@@ -1,37 +1,30 @@
 package;
 
+import haxe.Json;
 import haxe.SysTools;
-import js.Node;
-import vscode.TaskDefinition;
-import vscode.TaskGroup;
-import haxe.ds.ReadOnlyArray;
-import vscode.ShellExecution;
-import vscode.ProcessExecution;
-import tracker.Tracker;
-import tracker.DefaultBackend;
-import tracker.Model;
-import tracker.Entity;
-
 import haxe.Timer;
 import haxe.io.Path;
-import haxe.Json;
-
-import js.node.ChildProcess;
 import js.html.Console;
-import sys.io.File;
+import js.node.ChildProcess;
 import sys.FileSystem;
-
-import vscode.ExtensionContext;
-import vscode.StatusBarItem;
-import vscode.FileSystemWatcher;
+import sys.io.File;
+import tracker.DefaultBackend;
+import tracker.Entity;
+import tracker.Model;
+import tracker.Tracker;
 import vscode.CancellationToken;
 import vscode.Disposable;
-import vscode.TaskProvider;
+import vscode.ExtensionContext;
+import vscode.FileSystemWatcher;
 import vscode.ProviderResult;
+import vscode.ShellExecution;
+import vscode.StatusBarItem;
 import vscode.Task;
-import vscode.TaskScope;
-import vscode.TaskRevealKind;
+import vscode.TaskDefinition;
+import vscode.TaskGroup;
 import vscode.TaskPanelKind;
+import vscode.TaskRevealKind;
+import vscode.TaskScope;
 
 using StringTools;
 using tracker.SaveModel;
@@ -113,7 +106,7 @@ class TrackerBackend extends DefaultBackend {
         return str;
     }
 
-}   
+}
 
 class VscodeCeramic extends Model {
 
@@ -317,7 +310,7 @@ class VscodeCeramic extends Model {
         }
 
         return selectedTargetInfo.command;
-        
+
         var taskArgs:Array<String> = [];
         if (selectedTargetInfo.args != null) {
             taskArgs = [].concat(selectedTargetInfo.args);
@@ -353,7 +346,7 @@ class VscodeCeramic extends Model {
         if (selectedTargetInfo == null) {
             return null;
         }
-        
+
         var taskArgs:Array<String> = [];
         if (selectedTargetInfo.args != null) {
             taskArgs = [].concat(selectedTargetInfo.args);
@@ -625,7 +618,7 @@ class VscodeCeramic extends Model {
             }
 
             watcher = Vscode.workspace.createFileSystemWatcher(filePattern, false, false, false);
-    
+
             context.subscriptions.push(watcher.onDidChange(function(uri) {
                 trace('Change: $uri');
                 createOrUpdateCeramicPath(uri.path);
@@ -633,6 +626,7 @@ class VscodeCeramic extends Model {
             context.subscriptions.push(watcher.onDidCreate(function(uri) {
                 trace('Create: $uri');
                 createOrUpdateCeramicPath(uri.path);
+                checkExistingCeramicPaths();
             }));
             context.subscriptions.push(watcher.onDidDelete(function(uri) {
                 trace('Delete: $uri');
@@ -645,6 +639,21 @@ class VscodeCeramic extends Model {
 
     }
 
+    function checkExistingCeramicPaths() {
+
+        var isWindows = (Sys.systemName() == 'Windows');
+        for (path in [].concat(availableCeramicProjects)) {
+            var p = path;
+            if (isWindows)
+                p = fixWindowsPath(p);
+            if (!FileSystem.exists(p)) {
+                trace('Delete path: $path');
+                removeCeramicPath(path);
+            }
+        }
+
+    }
+
     function createOrUpdateCeramicPath(path:String) {
 
         if (availableCeramicProjects.indexOf(path) == -1) {
@@ -652,7 +661,7 @@ class VscodeCeramic extends Model {
             sortAlphabetically(availableCeramicProjects);
         }
         updateFromSelectedCeramicProject();
-        
+
     }
 
     function removeCeramicPath(path:String) {
@@ -673,11 +682,11 @@ class VscodeCeramic extends Model {
 
         if (shouldRefresh)
             updateFromSelectedCeramicProject();
-        
+
     }
 
     function updateFromSelectedCeramicProject() {
-        
+
         if (selectedCeramicProject == null && availableCeramicProjects.length > 0) {
             selectedCeramicProject = availableCeramicProjects[0];
         }
@@ -722,8 +731,8 @@ class VscodeCeramic extends Model {
             var data = Json.parse(out);
             ideTargets = data.ide.targets;
             ideVariants = data.ide.variants;
-            
-            availableTargets = []; 
+
+            availableTargets = [];
             for (ideTarget in ideTargets) {
                 availableTargets.push(ideTarget.name);
             }
@@ -738,7 +747,7 @@ class VscodeCeramic extends Model {
         if (selectedTarget != null && availableTargets.indexOf(selectedTarget) == -1) {
             selectedTarget = null;
         }
-        
+
         if (selectedTarget == null && availableTargets.length > 0) {
             selectedTarget = availableTargets[0];
         }
@@ -787,7 +796,7 @@ class VscodeCeramic extends Model {
         if (selectedVariant != null && availableVariants.indexOf(selectedVariant) == -1) {
             selectedVariant = null;
         }
-        
+
         if (selectedVariant == null && availableVariants.length > 0) {
             selectedVariant = availableVariants[0];
         }
@@ -866,7 +875,7 @@ class VscodeCeramic extends Model {
             if (choice == null || choice.index == selectedIndex) {
                 return;
             }
-            
+
             try {
                 selectedCeramicProject = availableCeramicProjects[choice.index];
                 updateFromSelectedCeramicProject();
@@ -976,7 +985,7 @@ class VscodeCeramic extends Model {
                 return path.substring(1);
             }
         }
-        
+
         return path;
 
     }
@@ -1018,7 +1027,7 @@ class VscodeCeramic extends Model {
             if (choice == null || choice.index == selectedIndex) {
                 return;
             }
-            
+
             try {
                 selectedTarget = availableTargets[choice.index];
                 updateFromSelectedTarget();
@@ -1072,7 +1081,7 @@ class VscodeCeramic extends Model {
             if (choice == null || choice.index == selectedIndex) {
                 return;
             }
-            
+
             try {
                 selectedVariant = availableVariants[choice.index];
                 updateFromSelectedVariant();
@@ -1094,7 +1103,7 @@ class VscodeCeramic extends Model {
             statusBarItem = Vscode.window.createStatusBarItem(Left, -numStatusBars); // Ideally, we would want to make priority configurable
             context.subscriptions.push(statusBarItem);
         }
-        
+
         //statusBarItem.text = "[ " + title + " ]";
         statusBarItem.text = title;
         statusBarItem.tooltip = description != null ? description : '';
