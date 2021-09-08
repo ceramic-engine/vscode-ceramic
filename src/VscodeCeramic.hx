@@ -473,10 +473,17 @@ class VscodeCeramic extends Model {
                             // Try to replace it with current ceramic installation.
                             if (ceramicToolsPath != null && FileSystem.exists(ceramicToolsPath)) {
                                 var cmdPathParts = cmdPath.split('/');
+                                var lastPart = cmdPathParts[cmdPathParts.length - 1];
+                                if (isWindows && !lastPart.endsWith('.cmd')) {
+                                    lastPart += '.cmd';
+                                }
+                                else if (!isWindows && lastPart.endsWith('.cmd')) {
+                                    lastPart = lastPart.substring(0, lastPart.length - '.cmd'.length);
+                                }
                                 var relativeToolsPath = getRelativePath(ceramicToolsPath, rootPath);
                                 Reflect.setField(settings, name, Path.join([
                                     relativeToolsPath,
-                                    cmdPathParts[cmdPathParts.length - 1]
+                                    lastPart
                                 ]));
                             }
                             else {
