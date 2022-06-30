@@ -5,3 +5,9 @@
 -js vscode-ceramic.js
 -D js-source-map
 VscodeCeramic
+
+--next
+
+-cp src
+--main PatchOutput
+--interp
