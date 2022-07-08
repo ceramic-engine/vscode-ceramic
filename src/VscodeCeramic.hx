@@ -600,6 +600,9 @@ class VscodeCeramic extends Model {
             args,
             {
                 cwd: cwd
+            },
+            function(_, _, _) {
+                Vscode.commands.executeCommand('haxe.restartLanguageServer');
             }
         );
 
