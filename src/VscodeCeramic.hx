@@ -29,6 +29,8 @@ import vscode.TaskScope;
 using StringTools;
 using tracker.SaveModel;
 
+typedef Vshaxe = Dynamic;
+
 typedef IdeInfoTargetItem = {
 
     var name:String;
@@ -128,6 +130,11 @@ class VscodeCeramic extends Model {
 
     }
 
+    private inline function getVshaxe():Vshaxe
+    {
+        return Vscode.extensions.getExtension("nadako.vshaxe").exports;
+    }
+
 /// Properties
 
     var context:ExtensionContext;
@@ -153,6 +160,10 @@ class VscodeCeramic extends Model {
     var lastTasksJson:String = null;
 
     var ceramicToolsPath:String = null;
+
+    var displayArgsProvider:CeramicDisplayArgsProvider = null;
+
+    var displayArgsProviderDisposable:Disposable = null;
 
     @observe var ideTargets:Array<IdeInfoTargetItem> = null;
 
@@ -396,10 +407,8 @@ class VscodeCeramic extends Model {
 
         resolveCeramicToolsPath(function() {
 
-            patchHaxeExecutableSettings();
+            patchHaxeExecutableAndCompletionSettings();
             loadCeramicContext();
-            //loadTasksJson();
-            //disableTasksChooserFile();
             initTaskProvider();
         });
 
@@ -423,13 +432,11 @@ class VscodeCeramic extends Model {
         this.loadFromKey('ceramicUserInfo');
         this.autoSaveAsKey('ceramicUserInfo');
 
-        //Tracker.backend.interval(this, 0.5, updateTasksJson);
-
     }
 
 /// Update settings.json
 
-    function patchHaxeExecutableSettings():Void {
+    function patchHaxeExecutableAndCompletionSettings():Void {
 
         try {
             var rootPath = getRootPath();
@@ -439,7 +446,8 @@ class VscodeCeramic extends Model {
             var settingsPath = Path.join([rootPath, '.vscode/settings.json']);
             var settings = Json.parse(File.getContent(settingsPath));
             if (settings != null) {
-                var patched = false;
+                var patchedHaxeExecutable = false;
+                var patchedCompletion = false;
                 for (cmdName in ['haxe', 'haxelib']) {
                     var name = cmdName + '.executable';
                     if (Reflect.field(settings, name) != null) {
@@ -454,7 +462,7 @@ class VscodeCeramic extends Model {
                         ) {
                             // Add ".cmd" to command path
                             Reflect.setField(settings, name, Reflect.field(settings, name) + '.cmd');
-                            patched = true;
+                            patchedHaxeExecutable = true;
                         }
                         else if (!isWindows
                         && cmdPath.endsWith('tools/$cmdName.cmd')
@@ -464,7 +472,7 @@ class VscodeCeramic extends Model {
                             var toReplace:String = Reflect.field(settings, name);
                             toReplace = toReplace.substring(0, toReplace.length - 4);
                             Reflect.setField(settings, name, toReplace);
-                            patched = true;
+                            patchedHaxeExecutable = true;
                         }
                         else if (
                             (cmdPath.endsWith('/tools/$cmdName') || cmdPath.endsWith('/tools/$cmdName.cmd'))
@@ -490,12 +498,22 @@ class VscodeCeramic extends Model {
                                 // If no ceramic installation known, simply remove the fields
                                 Reflect.deleteField(settings, name);
                             }
-                            patched = true;
+                            patchedHaxeExecutable = true;
                         }
                     }
                 }
-                if (patched) {
-                    Vscode.window.showInformationMessage('Auto-patched .vscode/settings.json to point to proper haxe/haxelib binaries.');
+                if (Reflect.hasField(settings, 'haxe.configurations')) {
+                    Reflect.deleteField(settings, 'haxe.configurations');
+                    patchedCompletion = true;
+                }
+                if (Reflect.hasField(settings, 'haxe.displayConfigurations')) {
+                    Reflect.deleteField(settings, 'haxe.displayConfigurations');
+                    patchedCompletion = true;
+                }
+                if (patchedHaxeExecutable || patchedCompletion) {
+                    if (patchedHaxeExecutable) {
+                        Vscode.window.showInformationMessage('Auto-patched .vscode/settings.json to point to proper haxe/haxelib binaries.');
+                    }
                     File.saveContent(settingsPath, Json.stringify(settings, null, '    '));
                 }
             }
@@ -503,62 +521,6 @@ class VscodeCeramic extends Model {
         catch (e1:Dynamic) {
             trace(e1);
             trace('Failed to patch haxe executable setting in .vscode/settings.json (maybe there is none yet)');
-        }
-
-    }
-
-/// Update tasks.json
-
-    function loadTasksJson():Void {
-
-        try {
-            var tasksPath = Path.join([getRootPath(), '.vscode/tasks.json']);
-            lastTasksJson = Json.parse(File.getContent(tasksPath));
-        }
-        catch (e1:Dynamic) {
-            trace('Failed to load .vscode/tasks.json (maybe there is none yet)');
-        }
-
-    }
-
-    function updateTasksJson():Void {
-
-        var newTasksJson = this.tasksJsonString;
-        if (newTasksJson == null) {
-            return;
-        }
-
-        if (lastTasksJson != newTasksJson) {
-
-            trace('Update .vscode/tasks.json...');
-
-            try {
-                var tasksPath = Path.join([getRootPath(), '.vscode/tasks.json']);
-                File.saveContent(tasksPath, newTasksJson);
-                lastTasksJson = newTasksJson;
-
-                trace('Updated!');
-            }
-            catch (e1:Dynamic) {
-                trace('Failed to update .vscode/tasks.json: ' + e1);
-            }
-        }
-
-    }
-
-/// Disable tasks-chooser.json
-
-    function disableTasksChooserFile():Void {
-
-        // Before this ceramic extension was available, projects were using tasks-chooser.json
-        // This file is now obsolete and should not be used anymore as it conflicts with ceramic extension
-        // If it exists, rename it to tasks-chooser_BACKUP.json
-        var tasksChooserPath = Path.join([getRootPath(), '.vscode/tasks-chooser.json']);
-        if (FileSystem.exists(tasksChooserPath)) {
-            trace('Rename .vscode/tasks-chooser.json to .vscode/tasks-chooser_BACKUP.json (file is obsolete)');
-            var backupTasksChooserPath = Path.join([getRootPath(), '.vscode/tasks-chooser_BACKUP.json']);
-            File.saveContent(backupTasksChooserPath, File.getContent(tasksChooserPath));
-            FileSystem.deleteFile(tasksChooserPath);
         }
 
     }
@@ -594,6 +556,12 @@ class VscodeCeramic extends Model {
         var cwd = getRootPath();
         cwd = extractArgsCwd(cwd, args, true);
 
+        var completionHxmlPath = extractCompletionHxmlArg(args);
+
+        var originalArgs = args;
+        var hasDisplayArgsProvider = (displayArgsProvider != null);
+        args = hasDisplayArgsProvider ? patchCompletionHxmlArgs(args) : args;
+
         trace('On select command: ${selectedTargetInfo.select.command} ${args.join(' ')}');
         command(
             selectedTargetInfo.select.command,
@@ -601,10 +569,74 @@ class VscodeCeramic extends Model {
             {
                 cwd: cwd
             },
-            function(_, _, _) {
-                Vscode.commands.executeCommand('haxe.restartLanguageServer');
+            function(_, cmdOut, _) {
+                if (hasDisplayArgsProvider && originalArgs.length != args.length && cmdOut != null && cmdOut.trim().length > 0) {
+                    if (completionHxmlPath != null && FileSystem.exists(completionHxmlPath)) {
+                        FileSystem.deleteFile(completionHxmlPath);
+                    }
+                    trace(cmdOut);
+
+                    // Compatibility with older Ceramic version
+                    if (cmdOut.startsWith('Updated ') && cmdOut.indexOf('--cwd ') != -1) {
+                        cmdOut = cmdOut.substring(cmdOut.indexOf('--cwd '));
+                    }
+
+                    displayArgsProvider.update(cmdOut);
+                }
+                else {
+                    untyped setTimeout(function() {
+                        Vscode.commands.executeCommand('haxe.restartLanguageServer');
+                    }, 1000);
+                }
             }
         );
+
+    }
+
+    function findCompletionHxmlArgIndex(args:Array<String>) {
+
+        var completionIndex = -1;
+
+        for (i in 0...args.length) {
+            var arg = args[i];
+            if (arg.endsWith('completion.hxml') && i > 0 && (args[i-1] == '--output' || args[i-1] == '--hxml-output')) {
+                completionIndex = i;
+                break;
+            }
+        }
+
+        return completionIndex;
+
+    }
+
+    function patchCompletionHxmlArgs(args:Array<String>, ?replacementSuffix:String) {
+
+        var newArgs = [].concat(args);
+
+        var completionIndex = findCompletionHxmlArgIndex(args);
+
+        if (completionIndex > 0) {
+            if (replacementSuffix != null) {
+                newArgs[completionIndex] = newArgs[completionIndex] + replacementSuffix;
+            }
+            else {
+                newArgs.splice(completionIndex - 1, 2);
+            }
+        }
+
+        return newArgs;
+
+    }
+
+    function extractCompletionHxmlArg(args:Array<String>) {
+
+        var completionIndex = findCompletionHxmlArgIndex(args);
+
+        if (completionIndex > 0) {
+            return args[completionIndex];
+        }
+
+        return null;
 
     }
 
@@ -701,6 +733,13 @@ class VscodeCeramic extends Model {
             selectedCeramicProject = availableCeramicProjects[0];
         }
 
+        if (selectCeramicProject == null) {
+            disposeDisplayArgsProvider();
+        }
+        else {
+            initDisplayArgsProvider();
+        }
+
         var title = selectedCeramicProject != null ? computeShortPath(selectedCeramicProject) : '⚠️ no ceramic project';
         var description = selectedCeramicProject != null ? selectedCeramicProject : 'This workspace doesn\'t have any ceramic.yml file';
 
@@ -744,7 +783,16 @@ class VscodeCeramic extends Model {
 
             availableTargets = [];
             for (ideTarget in ideTargets) {
+                if (ideTarget.args != null) {
+                    ideTarget.args = patchCompletionHxmlArgs(ideTarget.args);
+                }
                 availableTargets.push(ideTarget.name);
+            }
+
+            for (ideVariant in ideVariants) {
+                if (ideVariant.args != null) {
+                    ideVariant.args = patchCompletionHxmlArgs(ideVariant.args);
+                }
             }
 
             updateFromSelectedTarget();
@@ -1281,11 +1329,11 @@ class VscodeCeramic extends Model {
 
     }
 
-	/**
-	 * Provides tasks.
-	 * @param token A cancellation token.
-	 * @return an array of tasks
-	 */
+    /**
+     * Provides tasks.
+     * @param token A cancellation token.
+     * @return an array of tasks
+     */
     function provideTasks(?token:CancellationToken):ProviderResult<Array<Task>> {
 
         var task = createCeramicTask();
@@ -1420,6 +1468,96 @@ class VscodeCeramic extends Model {
 
         return result;
 
+    }
+
+/// Args provider
+
+    function initDisplayArgsProvider() {
+
+        if (displayArgsProvider == null) {
+            var api = getVshaxe();
+            displayArgsProvider = new CeramicDisplayArgsProvider(api, function(isProviderActive) {
+                //
+            });
+
+            if (untyped !api) {
+                trace("[warning] Haxe language server not available (using an incompatible vshaxe version)");
+            }
+            else
+            {
+                displayArgsProviderDisposable = api.registerDisplayArgumentsProvider("Ceramic", displayArgsProvider);
+            }
+        }
+
+    }
+
+    function disposeDisplayArgsProvider() {
+
+        if (displayArgsProviderDisposable != null) {
+            displayArgsProviderDisposable.dispose();
+            displayArgsProviderDisposable = null;
+            displayArgsProvider = null;
+        }
+
+    }
+
+}
+
+/// Display args provider
+
+class CeramicDisplayArgsProvider
+{
+    public var description(default, never):String = "Ceramic project";
+    public var parsedArguments(default, null):Array<String>;
+
+    private var activationChangedCallback:Bool->Void;
+    private var api:Vshaxe;
+    private var arguments:String;
+
+    private var updateArgumentsCallback:Array<String>->Void;
+
+    public function new(api:Vshaxe, activationChangedCallback:Bool->Void)
+    {
+        this.api = api;
+        this.activationChangedCallback = activationChangedCallback;
+    }
+
+    public function activate(provideArguments:Array<String>->Void):Void
+    {
+        updateArgumentsCallback = provideArguments;
+
+        if (parsedArguments != null)
+        {
+            updateArguments();
+        }
+
+        activationChangedCallback(true);
+    }
+
+    public function deactivate():Void
+    {
+        updateArgumentsCallback = null;
+
+        activationChangedCallback(false);
+    }
+
+    public function update(arguments:String):Void
+    {
+        if (this.arguments != arguments && api != null)
+        {
+            this.arguments = arguments;
+            this.parsedArguments = api.parseHxmlToArguments(arguments);
+
+            updateArguments();
+        }
+    }
+
+    private function updateArguments()
+    {
+        if (updateArgumentsCallback != null)
+        {
+            updateArgumentsCallback(parsedArguments);
+        }
     }
 
 }
