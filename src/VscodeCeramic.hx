@@ -778,8 +778,8 @@ class VscodeCeramic extends Model {
             }
 
             var data = Json.parse(out);
-            ideTargets = data.ide.targets;
-            ideVariants = data.ide.variants;
+            var ideTargets:Array<IdeInfoTargetItem> = data.ide.targets;
+            var ideVariants:Array<IdeInfoVariantItem> = data.ide.variants;
 
             availableTargets = [];
             for (ideTarget in ideTargets) {
@@ -794,6 +794,9 @@ class VscodeCeramic extends Model {
                     ideVariant.args = patchCompletionHxmlArgs(ideVariant.args);
                 }
             }
+
+            this.ideTargets = ideTargets;
+            this.ideVariants = ideVariants;
 
             updateFromSelectedTarget();
         });
