@@ -570,7 +570,7 @@ class VscodeCeramic extends Model {
                 cwd: cwd
             },
             function(_, cmdOut, _) {
-                if (hasDisplayArgsProvider && originalArgs.length != args.length && cmdOut != null && cmdOut.trim().length > 0) {
+                if (hasDisplayArgsProvider && cmdOut != null && cmdOut.trim().length > 0) {
                     if (completionHxmlPath != null && FileSystem.exists(completionHxmlPath)) {
                         FileSystem.deleteFile(completionHxmlPath);
                     }
