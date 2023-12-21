@@ -778,6 +778,7 @@ class VscodeCeramic extends Model {
             }
 
             var data = Json.parse(out);
+            trace(Json.stringify(data, null, '  '));
             var ideTargets:Array<IdeInfoTargetItem> = data.ide.targets;
             var ideVariants:Array<IdeInfoVariantItem> = data.ide.variants;
 
