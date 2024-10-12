@@ -4,7 +4,7 @@
 	"description": "An extension to use ceramic engine with Visual Studio Code",
 	"publisher": "jeremyfa",
 	"license": "MIT",
-	"version": "0.3.2",
+	"version": "0.3.3",
 	"engines": {
 		"vscode": "^1.4.0"
 	},
@@ -79,7 +79,8 @@
 		"isApplicationScoped": false,
 		"updated": true,
 		"isPreReleaseVersion": false,
-		"installedTimestamp": 1666792760478,
-		"preRelease": false
+		"installedTimestamp": 1703245309027,
+		"preRelease": false,
+		"pinned": false
 	}
 }
