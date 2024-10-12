@@ -768,7 +768,7 @@ class VscodeCeramic extends Model {
         }
         fetchingTargets = true;
 
-        command('ceramic', ['ide', 'info', '--print-split-lines', '--vscode-editor'], { cwd: Path.directory(selectedCeramicProject), showError: true }, function(code, out, err) {
+        command('ceramic', ['ide', 'info', '--print-split-lines', '--vscode-editor', '--vscode-uri-scheme', Vscode.env.uriScheme], { cwd: Path.directory(selectedCeramicProject), showError: true }, function(code, out, err) {
             fetchingTargets = false;
 
             if (shouldFetchAgain) {
@@ -1063,11 +1063,20 @@ class VscodeCeramic extends Model {
                 if (target == targetInfo.name) {
                     description = targetInfo.command;
                     if (targetInfo.args != null && targetInfo.args.length > 0) {
-                        for (i in 0...targetInfo.args.length) {
+                        var i = 0;
+                        while (i < targetInfo.args.length) {
                             var arg = targetInfo.args[i];
-                            if (arg != '--vscode-editor') {
+                            if (arg == '--vscode-editor') {
+                                // Skip
+                            }
+                            else if (arg == '--vscode-uri-scheme') {
+                                // Skip (with value)
+                                i++;
+                            }
+                            else {
                                 description += ' ' + arg;
                             }
+                            i++;
                         }
                     }
                 }
