@@ -582,11 +582,10 @@ class VscodeCeramic extends Model {
                     }
 
                     displayArgsProvider.update(cmdOut);
+                    updateAssetsWatchList(cmdOut, cwd);
                 }
                 else {
-                    untyped setTimeout(function() {
-                        Vscode.commands.executeCommand('haxe.restartLanguageServer');
-                    }, 1000);
+                    haxeServerDirty();
                 }
             }
         );
@@ -1485,6 +1484,136 @@ class VscodeCeramic extends Model {
         if (!result.startsWith('.')) result = './' + result;
 
         return result;
+
+    }
+
+    var assetWatchers:Map<String,FileSystemWatcher> = null;
+
+    function updateAssetsWatchList(rawHxml:String, cwd:String) {
+
+        try {
+            final hxml = Hxml.parse(rawHxml);
+            if (hxml == null) return;
+
+            // Gather asset patterns
+            var assetPaths = new Map<String,String>();
+            for (i in 0...hxml.length-1) {
+                final first = hxml[i];
+                if (first == '-D') {
+                    var second = hxml[i+1];
+                    if (second.startsWith('assets_path=')) {
+                        var newPath = second.substring('assets_path='.length);
+                        if (newPath.startsWith('"')) {
+                            newPath = Json.parse(newPath);
+                        }
+                        if (newPath is String) {
+                            if (!Path.isAbsolute(newPath)) {
+                                newPath = Path.join([cwd, newPath]);
+                            }
+                            while (newPath.endsWith('/') || newPath.endsWith('\\')) {
+                                newPath = newPath.substring(0, newPath.length - 1);
+                            }
+                            if (FileSystem.exists(newPath) && FileSystem.isDirectory(newPath)) {
+                                assetPaths.set(
+                                    newPath,
+                                    newPath + '/**/*'
+                                );
+                            }
+                        }
+                    }
+                    else if (second.startsWith('ceramic_extra_assets_paths=')) {
+                        var extraPathsRaw = second.substring('ceramic_extra_assets_paths='.length);
+                        if (extraPathsRaw.startsWith('"')) {
+                            extraPathsRaw = Json.parse(extraPathsRaw);
+                        }
+                        var extraPaths:Array<String> = Json.parse(extraPathsRaw);
+                        if (extraPaths is Array) {
+                            for (newPath in extraPaths) {
+                                if (!Path.isAbsolute(newPath)) {
+                                    newPath = Path.join([cwd, newPath]);
+                                }
+                                while (newPath.endsWith('/') || newPath.endsWith('\\')) {
+                                    newPath = newPath.substring(0, newPath.length - 1);
+                                }
+                                if (FileSystem.exists(newPath) && FileSystem.isDirectory(newPath)) {
+                                    assetPaths.set(
+                                        newPath,
+                                        newPath + '/**/*'
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Then update file watchers (create new watchers for new paths, dispose the ones pointing to outdated paths)
+            var disposed = null;
+            if (assetWatchers != null) {
+                for (path => watcher in assetWatchers) {
+                    if (!assetPaths.exists(path)) {
+                        trace('Dispose assets watcher for path: $path');
+                        watcher.dispose();
+                        haxeServerDirty();
+                        if (disposed == null) disposed = [];
+                        disposed.push(path);
+                    }
+                }
+            }
+            var firstTime = false;
+            if (assetWatchers == null) {
+                firstTime = true;
+                assetWatchers = new Map();
+            }
+            if (disposed != null) {
+                for (path in disposed) {
+                    assetWatchers.remove(path);
+                }
+            }
+            for (path => filePattern in assetPaths) {
+                if (!assetWatchers.exists(path)) {
+                    trace('Create assets watcher for path: $path');
+                    final watcher = Vscode.workspace.createFileSystemWatcher(filePattern, false, false, false);
+                    context.subscriptions.push(watcher.onDidChange(function(uri) {
+                        trace('Change asset: $uri');
+                        haxeServerDirty();
+                    }));
+                    context.subscriptions.push(watcher.onDidCreate(function(uri) {
+                        trace('Create asset: $uri');
+                        haxeServerDirty();
+                    }));
+                    context.subscriptions.push(watcher.onDidDelete(function(uri) {
+                        trace('Delete asset: $uri');
+                        haxeServerDirty();
+                    }));
+                    context.subscriptions.push(watcher);
+                    if (!firstTime) {
+                        haxeServerDirty();
+                    }
+                }
+            }
+
+        }
+        catch (e:Any) {
+            trace(e);
+            trace('Failed to parse hxml: ' + rawHxml);
+        }
+
+    }
+
+    var restartLanguageServerScheduled:Bool = false;
+
+    function haxeServerDirty() {
+
+        if (!restartLanguageServerScheduled) {
+            restartLanguageServerScheduled = true;
+            untyped setTimeout(function() {
+                Vscode.commands.executeCommand('haxe.restartLanguageServer');
+                untyped setTimeout(function() {
+                    restartLanguageServerScheduled = false;
+                }, 5000);
+            }, 1000);
+        }
 
     }
 
