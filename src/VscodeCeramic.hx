@@ -294,7 +294,7 @@ class VscodeCeramic extends Model {
         };
         task.problemMatcher = "$haxe";
         task.runOptions = {
-            'instanceLimit': 1
+            'instanceLimit': 2
         }
 
         tasks.tasks = [task];
@@ -405,11 +405,110 @@ class VscodeCeramic extends Model {
             selectVariant();
         }));
 
+        watchTasksJson();
+
         resolveCeramicToolsPath(function() {
 
             patchHaxeExecutableAndCompletionSettings();
+            patchTaskInstanceLimit();
             loadCeramicContext();
             initTaskProvider();
+        });
+
+    }
+
+    function createDefaultTasksJson():Void {
+
+        try {
+            var rootPath = getRootPath();
+            var isWindows = (Sys.systemName() == 'Windows');
+            if (isWindows)
+                rootPath = fixWindowsPath(rootPath);
+
+            // Check if ceramic.yml exists at root
+            var ceramicYmlPath = Path.join([rootPath, 'ceramic.yml']);
+            if (!FileSystem.exists(ceramicYmlPath)) {
+                return;
+            }
+
+            // Create .vscode directory if it doesn't exist
+            var vscodePath = Path.join([rootPath, '.vscode']);
+            if (!FileSystem.exists(vscodePath)) {
+                FileSystem.createDirectory(vscodePath);
+            }
+
+            var tasksPath = Path.join([vscodePath, 'tasks.json']);
+            if (!FileSystem.exists(tasksPath)) {
+                var defaultTasks = {
+                    version: "2.0.0",
+                    tasks: [
+                        {
+                            type: "ceramic",
+                            args: "active configuration",
+                            problemMatcher: [
+                                "$haxe-absolute",
+                                "$haxe",
+                                "$haxe-error",
+                                "$haxe-trace"
+                            ],
+                            group: {
+                                kind: "build",
+                                isDefault: true
+                            },
+                            label: "ceramic: active configuration",
+                            runOptions: {
+                                instanceLimit: 2
+                            }
+                        }
+                    ]
+                };
+
+                File.saveContent(tasksPath, Json.stringify(defaultTasks, null, '    '));
+                trace('Created default tasks.json at: $tasksPath');
+            }
+        }
+        catch (e:Dynamic) {
+            trace(e);
+            trace('Failed to create default tasks.json');
+        }
+
+    }
+
+    var tasksWatcher:FileSystemWatcher;
+
+    function watchTasksJson():Void {
+
+        if (!checkWorkspaceFolder()) {
+            return;
+        }
+
+        var filePattern = '**/.vscode/tasks.json';
+
+        trace('Watching tasks.json... (pattern: $filePattern)');
+
+        // Create default tasks.json if it doesn't exist
+        createDefaultTasksJson();
+
+        Vscode.workspace.findFiles(filePattern).then(function(result) {
+            for (uri in result) {
+                trace('Found tasks.json: $uri');
+                patchTaskInstanceLimit();
+            }
+
+            tasksWatcher = Vscode.workspace.createFileSystemWatcher(filePattern, false, false, false);
+
+            context.subscriptions.push(tasksWatcher.onDidChange(function(uri) {
+                trace('tasks.json changed: $uri');
+                patchTaskInstanceLimit();
+            }));
+            context.subscriptions.push(tasksWatcher.onDidCreate(function(uri) {
+                trace('tasks.json created: $uri');
+                patchTaskInstanceLimit();
+            }));
+            context.subscriptions.push(tasksWatcher.onDidDelete(function(uri) {
+                trace('tasks.json deleted: $uri');
+            }));
+            context.subscriptions.push(tasksWatcher);
         });
 
     }
@@ -521,6 +620,42 @@ class VscodeCeramic extends Model {
         catch (e1:Dynamic) {
             trace(e1);
             trace('Failed to patch haxe executable setting in .vscode/settings.json (maybe there is none yet)');
+        }
+
+    }
+
+    function patchTaskInstanceLimit() {
+
+        try {
+            var rootPath = getRootPath();
+            var isWindows = (Sys.systemName() == 'Windows');
+            if (isWindows)
+                rootPath = fixWindowsPath(rootPath);
+            var tasksPath = Path.join([rootPath, '.vscode/tasks.json']);
+            var tasks:Dynamic = Json.parse(File.getContent(tasksPath));
+            if (tasks != null) {
+                var didChange = false;
+                if (tasks?.tasks != null) {
+                    for (task in (tasks.tasks:Array<Dynamic>)) {
+                        if (task.type == 'ceramic') {
+                            if (task.runOptions?.instanceLimit != 2) {
+                                if (task.runOptions == null) {
+                                    task.runOptions = {};
+                                }
+                                task.runOptions.instanceLimit = 2;
+                                didChange = true;
+                            }
+                        }
+                    }
+                }
+                if (didChange) {
+                    File.saveContent(tasksPath, Json.stringify(tasks, null, '    '));
+                }
+            }
+        }
+        catch (e1:Dynamic) {
+            trace(e1);
+            trace('Failed to patch ceramic task in .vscode/tasks.json');
         }
 
     }
@@ -1437,7 +1572,7 @@ class VscodeCeramic extends Model {
             "panel": TaskPanelKind.Shared
         };
         task.runOptions = cast {
-            'instanceLimit': 1
+            'instanceLimit': 2
         };
 
         return task;
